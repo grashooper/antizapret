@@ -1,0 +1,89 @@
+# Пример конфигурации Tor для AntiZapret
+# Этот файл создается автоматически скриптом install.sh
+# Расположение: /usr/local/etc/tor/torrc
+
+# DNS порт для локальной сети
+# Замените 192.168.1.1 на IP адрес вашего роутера
+DNSPort 192.168.1.1:53
+
+# Виртуальная сеть для DNS резолвинга
+VirtualAddrNetworkIPv4 10.192.0.0/10
+AutomapHostsOnResolve 1
+
+# Запуск как демон
+RunAsDaemon 1
+
+# Прозрачный прокси порт
+TransPort 9040
+
+# Исключить узлы из определенных стран
+# RU - Россия, BY - Беларусь, KG - Киргизия, KZ - Казахстан,
+# UZ - Узбекистан, TJ - Таджикистан, TM - Туркменистан,
+# TR - Турция, AZ - Азербайджан, AM - Армения
+ExcludeNodes {RU}, {BY}, {KG}, {KZ}, {UZ}, {TJ}, {TM}, {TR}, {AZ}, {AM}
+ExcludeExitNodes {RU}, {BY}, {KG}, {KZ}, {UZ}, {TJ}, {TM}, {TR}, {AZ}, {AM}
+
+# Периодичность heartbeat сообщений в логе
+HeartbeatPeriod 1 hours
+
+# Не быть exit-узлом
+ExitRelay 0
+
+# Pluggable transports для обхода блокировок
+
+# obfs4proxy - обфускация Tor трафика
+ClientTransportPlugin obfs4 exec /usr/local/bin/obfs4proxy managed
+
+# webtunnel - имитация HTTPS трафика
+ClientTransportPlugin webtunnel exec /usr/local/bin/webtunnel-tor-client
+
+# Использовать мосты
+UseBridges 1
+
+# Мосты obfs4
+# Получите актуальные мосты на https://bridges.torproject.org/
+# Формат: Bridge obfs4 IP:PORT FINGERPRINT cert=CERT iat-mode=MODE
+# Пример:
+# Bridge obfs4 192.0.2.1:1234 ABCD1234567890ABCD1234567890ABCD12345678 cert=xyz123... iat-mode=0
+# Bridge obfs4 192.0.2.2:5678 EFGH1234567890EFGH1234567890EFGH12345678 cert=abc456... iat-mode=0
+
+# Мосты webtunnel
+# Формат: Bridge webtunnel [IP]:PORT FINGERPRINT url=URL
+# Пример:
+# Bridge webtunnel [2001:db8::1]:443 IJKL1234567890IJKL1234567890IJKL12345678 url=https://example.com
+# Bridge webtunnel 203.0.113.1:443 MNOP1234567890MNOP1234567890MNOP12345678 url=https://example.org
+
+# Дополнительные настройки (опционально)
+
+# Увеличить количество одновременных подключений
+# NumEntryGuards 3
+
+# Таймаут подключения к мосту (в секундах)
+# CircuitBuildTimeout 60
+
+# Размер буфера для входящих соединений
+# SocksPort 0
+
+# Логирование (по умолчанию в /var/log/tor/notices.log)
+# Log notice file /var/log/tor/notices.log
+
+# Отключить версионную проверку
+# DisableDebuggerAttachment 0
+
+# Дополнительные опции безопасности
+
+# Избегать узлов с плохой репутацией
+# StrictNodes 1
+
+# Не использовать узлы без контактной информации
+# ContactInfo tor-admin@example.com
+
+# Ограничение скорости (в KB/s, 0 = без ограничений)
+# BandwidthRate 0
+# BandwidthBurst 0
+
+# Примечания:
+# 1. Получайте свежие мосты регулярно для стабильной работы
+# 2. Используйте несколько мостов разных типов для надежности
+# 3. Проверяйте логи на наличие ошибок подключения
+# 4. При проблемах попробуйте другие мосты

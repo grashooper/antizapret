@@ -1,0 +1,120 @@
+========================================
+  AntiZapret Installation Script
+========================================
+
+=> Detecting system information...
+[OK] System: FreeBSD 14 (amd64)
+
+=> Detecting local IP address...
+[OK] Detected LAN IP: 192.168.1.1
+Is this correct? (Y/n): y
+[INFO] Using LAN IP: 192.168.1.1
+
+Ready to install AntiZapret. Continue? (Y/n): y
+
+=> Installing dependencies...
+[INFO] Installing nano...
+ [|]
+[OK] nano installed
+[INFO] Fetching package information...
+[INFO] Installing zstd...
+   URL: https://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/zstd-1.5.6.pkg
+ [/]
+[OK] zstd installed
+[INFO] Installing tor...
+   URL: https://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/tor-0.4.8.12.pkg
+ [-]
+[OK] tor installed
+[INFO] Installing obfs4proxy-tor...
+   URL: https://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/obfs4proxy-tor-0.0.14_17.pkg
+ [\]
+[OK] obfs4proxy-tor installed
+[INFO] Installing webtunnel-tor...
+   URL: https://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/webtunnel-tor-0.0.1_10.pkg
+ [|]
+[OK] webtunnel-tor installed
+
+=> Configuring Tor bridges...
+
+[INFO] You need to obtain Tor bridges for obfs4 and webtunnel
+[INFO] Visit: https://bridges.torproject.org/
+[INFO] Or send email to: bridges@torproject.org
+
+[WARNING] Please prepare your bridge lines before continuing
+
+Press Enter when ready to input bridges...
+
+[INFO] Enter your obfs4 bridge lines (one per line, empty line to finish):
+Bridge obfs4 > 192.0.2.1:1234 ABCD1234... cert=xyz... iat-mode=0
+
+Bridge obfs4 >
+
+[INFO] Enter your webtunnel bridge lines (one per line, empty line to finish):
+Bridge webtunnel > [2001:db8::1]:443 EFGH5678... url=https://example.com
+
+Bridge webtunnel >
+
+=> Configuring Tor...
+[INFO] Creating new torrc configuration...
+[OK] torrc configured at /usr/local/etc/tor/torrc
+
+=> Setting up autostart...
+[OK] Autostart configured at /usr/local/etc/rc.d/tor.sh
+
+=> Installing AntiZapret IP list updater...
+[INFO] Cloning AntiZapret repository...
+ [/]
+[OK] Repository cloned
+[INFO] Running initial IP list update...
+ [-]
+[OK] IP list updated
+
+=> Configuring OPNsense integration...
+[INFO] Setting up OPNsense actions...
+[INFO] Reloading configd...
+ [\]
+[OK] OPNsense actions configured
+[INFO] You can now add a cron job via System > Settings > Cron
+[INFO] Command: Renew AntiZapret IP-list
+
+=> Starting Tor...
+[OK] Tor started successfully
+
+
+========================================
+  AntiZapret Installation Script
+========================================
+
+[OK] Installation completed successfully!
+
+=> Next steps:
+
+[INFO] 1. Configure firewall rules in OPNsense:
+   - Go to Firewall > Aliases
+   - Create alias: Name=AntiZapret_IPs, Type=External (advanced)
+   - Content URL: https://192.168.1.1/ipfw_antizapret.dat
+
+[INFO] 2. Set up NAT Port Forward rule:
+   - Go to Firewall > NAT > Port Forward
+   - Interface: LAN
+   - Protocol: TCP
+   - Destination: AntiZapret_IPs
+   - Redirect target IP: 127.0.0.1
+   - Redirect target port: 9040
+
+[INFO] 3. Add cron job for daily updates:
+   - Go to System > Settings > Cron
+   - Add task: Command = Renew AntiZapret IP-list
+
+[INFO] Configuration files:
+   - Tor config: /usr/local/etc/tor/torrc
+   - IP list: /usr/local/www/ipfw_antizapret.dat
+   - Autostart: /usr/local/etc/rc.d/tor.sh
+
+[INFO] Useful commands:
+   - Check Tor status: ps aux | grep tor
+   - View Tor logs: tail -f /var/log/tor/notices.log
+   - Restart Tor: pkill tor && /usr/local/bin/tor
+   - Update IP list: /root/antizapret/antizapret.pl
+
+[WARNING] Don't forget to configure your firewall rules in OPNsense GUI!
