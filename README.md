@@ -16,7 +16,7 @@
 
 ```bash
 cd /root
-git clone https://github.com/Limych/antizapret.git
+git clone https://github.com/grashooper/antizapret.git
 cd antizapret
 chmod +x install.sh
 ./install.sh
