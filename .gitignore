@@ -1,13 +1,2 @@
-# Environments
+node_modules/
 .env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-.idea/
-
-ipfw_antizapret.dat
-dump.csv
-test_*
