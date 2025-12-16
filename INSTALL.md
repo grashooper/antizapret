@@ -32,7 +32,7 @@
 
 ```bash
 cd /root
-fetch https://raw.githubusercontent.com/Limych/antizapret/master/install.sh
+fetch https://raw.githubusercontent.com/grashooper/antizapret/master/install.sh
 chmod +x install.sh
 ```
 
@@ -40,7 +40,7 @@ chmod +x install.sh
 
 ```bash
 cd /root
-git clone https://github.com/Limych/antizapret.git
+git clone https://github.com/grashooper/antizapret.git
 cd antizapret
 chmod +x install.sh
 ```
