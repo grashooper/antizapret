@@ -3,7 +3,7 @@
 ## Одна команда для установки
 
 ```bash
-cd /root && git clone https://github.com/Limych/antizapret.git && cd antizapret && chmod +x install.sh && ./install.sh
+cd /root && git clone https://github.com/grashooper/antizapret.git && cd antizapret && chmod +x install.sh && ./install.sh
 ```
 
 ## Что делает скрипт
