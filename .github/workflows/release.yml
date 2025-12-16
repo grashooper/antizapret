@@ -1,8 +1,9 @@
----
 name: "Release"
 
 on:
   push:
+    tags:
+      - 'v*'
     branches:
       - master
 
@@ -12,20 +13,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: "Check out repository"
-        uses: actions/checkout@v1
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - run: |
-          echo "package=antizapret" >> $GITHUB_ENV
-          echo "release_version=`git describe --abbrev=0 | sed s/v//`" >> $GITHUB_ENV
-
-      - name: "Setup Git"
+      - name: "Get version"
+        id: version
         run: |
-          git config --global user.name "release"
-          git config --global user.email "release@GitHub"
+          echo "package=antizapret" >> $GITHUB_ENV
+          
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # Если это тег — используем его
+            VERSION="${{ github.ref_name }}"
+          else
+            # Если это push в master — ищем последний тег
+            VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v3.0.0")
+          fi
+          
+          echo "release_version=${VERSION}" >> $GITHUB_ENV
+          echo "Version: ${VERSION}"
 
       - name: "Zip component dir"
         run: |
-          zip ${{ env.package }}.zip -r ./ -x "bin/*" -x ".*" -x "*-dev.*"
+          zip ${{ env.package }}.zip -r ./ \
+            -x "bin/*" \
+            -x ".*" \
+            -x "*-dev.*" \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x "requirements-dev.txt"
+
       - name: "Upload zip to release"
         uses: svenstaro/upload-release-action@v2
         with:
@@ -33,23 +50,5 @@ jobs:
           file: ${{ env.package }}.zip
           asset_name: ${{ env.package }}.zip
           tag: ${{ env.release_version }}
+          release_name: "AntiZapret ${{ env.release_version }}"
           overwrite: true
-
-  releasenotes:
-    name: "Prepare releasenotes"
-    runs-on: ubuntu-latest
-    steps:
-      - name: "Check out repository"
-        uses: actions/checkout@v1
-
-      - name: "Set up Python 3.7"
-        uses: actions/setup-python@v2
-        with:
-          python-version: 3.7
-
-      - name: "Install requirements"
-        run: |
-          python3 -m pip install setuptools wheel
-          python3 -m pip install -r ./requirements-dev.txt
-      - name: "Update release notes"
-        run: python3 ./bin/gen_releasenotes --token ${{ secrets.GITHUB_TOKEN }} --repo ${{ github.repository }} --release `git describe --abbrev=0`
