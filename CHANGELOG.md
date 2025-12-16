@@ -246,4 +246,3 @@ TCyZuUjX3ymFmrDPxTmeSNPMuuWRDtviFy
 **[🔝 Вернуться наверх](#-changelog)**
 
 </div>
-```
