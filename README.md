@@ -6,7 +6,7 @@
 ![Platform](https://img.shields.io/badge/platform-OPNsense%20%7C%20FreeBSD-orange?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
 
-**Прозрачный обход блокировок для локальной сети**
+**Прозрачный TOR шлюз для локальной сети**
 
 *Никаких настроек на клиентах — работает автоматически для всех устройств*
 
