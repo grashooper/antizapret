@@ -28,7 +28,7 @@
     Самое простое, зайдя в консоль (обязательно как **root**!) исполнить команды
     ```bash
     cd ~
-    git clone https://github.com/Limych/antizapret.git
+    git clone https://github.com/grashooper/antizapret.git
     cd antizapret
     ```
    
