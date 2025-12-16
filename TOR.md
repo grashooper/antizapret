@@ -109,9 +109,9 @@
 
 ## 📦 Установка
 
-### Автоматическая установка
+### Автоматическая установка (рекомендуется)
 
-Используйте основной установщик AntiZapret:
+Используйте основной установщик AntiZapret — он автоматически определит систему и установит пакеты из правильного репозитория:
 
 ```bash
 cd /root/antizapret
@@ -120,16 +120,118 @@ cd /root/antizapret
 
 ### Ручная установка пакетов
 
+> ⚠️ **Важно:** Пакеты `obfs4proxy-tor` и `webtunnel-tor` отсутствуют в стандартном репозитории OPNsense. Их необходимо устанавливать напрямую из репозитория FreeBSD.
+
+#### Шаг 1: Определение версии системы
+
 ```bash
-# Основной пакет Tor
+# Версия FreeBSD
+uname -r
+# Пример: 14.1-RELEASE-p5
+
+# Архитектура
+uname -m
+# Пример: amd64
+```
+
+#### Шаг 2: Установка базовых пакетов
+
+```bash
+# Tor доступен в репозитории OPNsense
+pkg install -y tor
+```
+
+#### Шаг 3: Установка транспортных плагинов из FreeBSD репозитория
+
+```bash
+# Определяем базовый URL репозитория FreeBSD
+# Формат: https://pkg.freebsd.org/FreeBSD:ВЕРСИЯ:АРХИТЕКТУРА/latest/All/
+
+# Для FreeBSD 14 amd64:
+PKG_BASE="https://pkg.freebsd.org/FreeBSD:14:amd64/latest/All"
+
+# Для FreeBSD 13 amd64:
+# PKG_BASE="https://pkg.freebsd.org/FreeBSD:13:amd64/latest/All"
+```
+
+#### Шаг 4: Поиск актуальных версий пакетов
+
+```bash
+# Найти актуальную версию obfs4proxy-tor
+fetch -qo - "${PKG_BASE}/" | grep -o 'href="obfs4proxy-tor-[^"]*\.pkg"' | head -1
+
+# Найти актуальную версию webtunnel-tor
+fetch -qo - "${PKG_BASE}/" | grep -o 'href="webtunnel-tor-[^"]*\.pkg"' | head -1
+```
+
+#### Шаг 5: Установка пакетов
+
+```bash
+# Пример для конкретных версий (замените на актуальные):
+pkg add ${PKG_BASE}/obfs4proxy-tor-0.0.14_2.pkg
+pkg add ${PKG_BASE}/webtunnel-tor-0.0.1.pkg
+
+# Или через скрипт автоопределения:
+OBFS4_PKG=$(fetch -qo - "${PKG_BASE}/" | grep -o 'obfs4proxy-tor-[^"]*\.pkg' | sort -V | tail -1)
+WEBTUNNEL_PKG=$(fetch -qo - "${PKG_BASE}/" | grep -o 'webtunnel-tor-[^"]*\.pkg' | sort -V | tail -1)
+
+pkg add "${PKG_BASE}/${OBFS4_PKG}"
+pkg add "${PKG_BASE}/${WEBTUNNEL_PKG}"
+```
+
+### Полный скрипт ручной установки
+
+```bash
+#!/bin/sh
+# Скрипт установки Tor с плагинами на OPNsense/FreeBSD
+
+set -e
+
+echo "=== Определение системы ==="
+OS_VERSION=$(uname -r | cut -d. -f1)
+ARCH=$(uname -m)
+echo "FreeBSD ${OS_VERSION}, архитектура: ${ARCH}"
+
+PKG_BASE="https://pkg.freebsd.org/FreeBSD:${OS_VERSION}:${ARCH}/latest/All"
+echo "Репозиторий: ${PKG_BASE}"
+
+echo ""
+echo "=== Установка Tor ==="
 pkg install -y tor
 
-# Транспортные плагины
-pkg install -y obfs4proxy-tor    # obfs4 транспорт
-pkg install -y webtunnel-tor     # webtunnel транспорт
+echo ""
+echo "=== Поиск транспортных плагинов ==="
 
-# Проверка установки
+# obfs4proxy-tor
+OBFS4_PKG=$(fetch -qo - "${PKG_BASE}/" 2>/dev/null | \
+            grep -o 'href="obfs4proxy-tor-[^"]*\.pkg"' | \
+            sed 's/href="//;s/"//' | sort -V | tail -1)
+
+if [ -n "$OBFS4_PKG" ]; then
+    echo "Найден: ${OBFS4_PKG}"
+    pkg add "${PKG_BASE}/${OBFS4_PKG}"
+else
+    echo "ВНИМАНИЕ: obfs4proxy-tor не найден"
+fi
+
+# webtunnel-tor
+WEBTUNNEL_PKG=$(fetch -qo - "${PKG_BASE}/" 2>/dev/null | \
+                grep -o 'href="webtunnel-tor-[^"]*\.pkg"' | \
+                sed 's/href="//;s/"//' | sort -V | tail -1)
+
+if [ -n "$WEBTUNNEL_PKG" ]; then
+    echo "Найден: ${WEBTUNNEL_PKG}"
+    pkg add "${PKG_BASE}/${WEBTUNNEL_PKG}"
+else
+    echo "ВНИМАНИЕ: webtunnel-tor не найден"
+fi
+
+echo ""
+echo "=== Проверка установки ==="
 pkg info | grep -E "tor|obfs4|webtunnel"
+
+echo ""
+echo "=== Готово ==="
 ```
 
 ### Проверка бинарных файлов
@@ -137,19 +239,62 @@ pkg info | grep -E "tor|obfs4|webtunnel"
 ```bash
 # Tor
 which tor
-/usr/local/bin/tor
+# Ожидается: /usr/local/bin/tor
 
 # obfs4proxy
 which obfs4proxy
-/usr/local/bin/obfs4proxy
+# Ожидается: /usr/local/bin/obfs4proxy
 
 # webtunnel
 which webtunnel-tor-client
-/usr/local/bin/webtunnel-tor-client
+# Ожидается: /usr/local/bin/webtunnel-tor-client
 
 # Версии
 tor --version
-obfs4proxy -version
+obfs4proxy -version 2>&1 | head -1
+```
+
+### Возможные проблемы при установке
+
+#### Проблема: Конфликт зависимостей
+
+```
+pkg: Cannot install package: conflicting packages
+```
+
+**Решение:**
+```bash
+# Установка с принудительным разрешением зависимостей
+pkg add -f "${PKG_BASE}/${OBFS4_PKG}"
+```
+
+#### Проблема: Несовместимая версия FreeBSD
+
+```
+pkg: wrong architecture
+```
+
+**Решение:**
+```bash
+# Проверьте правильность версии и архитектуры
+echo "OS: $(uname -r), Arch: $(uname -m)"
+
+# Используйте правильный URL
+# FreeBSD 13: https://pkg.freebsd.org/FreeBSD:13:amd64/latest/All/
+# FreeBSD 14: https://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/
+```
+
+#### Проблема: Отсутствует зависимость
+
+```
+pkg: missing dependency 'zstd'
+```
+
+**Решение:**
+```bash
+# Установите зависимости сначала
+pkg install -y zstd libevent
+pkg add "${PKG_BASE}/${OBFS4_PKG}"
 ```
 
 ---
@@ -245,7 +390,7 @@ Bridge webtunnel 192.0.2.2:443 ABCDEF1234567890ABCDEF1234567890ABCDEF12 url=http
 # Уровни: debug, info, notice, warn, err
 Log notice file /var/log/tor/notices.log
 
-# Для отладки (раскомменти��уйте при необходимости):
+# Для отладки (раскомментируйте при необходимости):
 # Log info file /var/log/tor/info.log
 # Log debug file /var/log/tor/debug.log
 
@@ -395,12 +540,22 @@ Configuration was valid
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Преимущества
+#### Проверка установки obfs4proxy
 
-- ✅ Высокая скорость
-- ✅ Низкие накладные расходы
-- ✅ Сложно детектировать
-- ✅ Широко поддерживается
+```bash
+# Проверка наличия
+which obfs4proxy
+# /usr/local/bin/obfs4proxy
+
+# Проверка версии
+obfs4proxy -version 2>&1
+# obfs4proxy-0.0.14
+
+# Проверка работоспособности
+obfs4proxy -enableLogging -logLevel DEBUG &
+# Должен запуститься без ошибок
+killall obfs4proxy
+```
 
 #### Настройка
 
@@ -433,12 +588,16 @@ Bridge obfs4 IP:PORT FINGERPRINT cert=CERT iat-mode=0
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Преимущества
+#### Проверка установки webtunnel
 
-- ✅ Выглядит как обычный HTTPS
-- ✅ Работает даже при блокировке obfs4
-- ✅ Использует стандартный порт 443
-- ✅ Сложнее заблокировать без побочных эффектов
+```bash
+# Проверка наличия
+which webtunnel-tor-client
+# /usr/local/bin/webtunnel-tor-client
+
+# Проверка версии
+webtunnel-tor-client -version 2>&1 || echo "OK (no version flag)"
+```
 
 #### Настройка
 
@@ -457,6 +616,23 @@ Bridge webtunnel IP:PORT FINGERPRINT url=https://example.com/path
 | **Доступность мостов** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
 | **Устойчивость к DPI** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
 | **Простота настройки** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+
+### Использование обоих транспортов
+
+Можно настроить оба транспорта и использовать мосты разных типов:
+
+```ini
+# Оба плагина
+ClientTransportPlugin obfs4 exec /usr/local/bin/obfs4proxy managed
+ClientTransportPlugin webtunnel exec /usr/local/bin/webtunnel-tor-client
+
+UseBridges 1
+
+# Мосты разных типов (Tor будет пробовать все)
+Bridge obfs4 192.0.2.1:443 FINGERPRINT1 cert=CERT1 iat-mode=0
+Bridge obfs4 192.0.2.2:443 FINGERPRINT2 cert=CERT2 iat-mode=0
+Bridge webtunnel 192.0.2.3:443 FINGERPRINT3 url=https://example.com/
+```
 
 ---
 
@@ -607,6 +783,33 @@ sockstat -4l | grep -E "9040|9050|9053"
 
 Если порты заняты — найдите и остановите конфликтующий процесс.
 
+### Транспортный плагин не найден
+
+#### Симптомы
+
+```
+[warn] Could not launch managed proxy executable at '/usr/local/bin/obfs4proxy'
+```
+
+#### Решение
+
+```bash
+# Проверьте установку
+pkg info | grep obfs4
+
+# Если не установлен — установите из FreeBSD репозитория
+OS_VERSION=$(uname -r | cut -d. -f1)
+ARCH=$(uname -m)
+PKG_BASE="https://pkg.freebsd.org/FreeBSD:${OS_VERSION}:${ARCH}/latest/All"
+
+OBFS4_PKG=$(fetch -qo - "${PKG_BASE}/" | grep -o 'obfs4proxy-tor-[^"]*\.pkg' | sort -V | tail -1)
+pkg add "${PKG_BASE}/${OBFS4_PKG}"
+
+# Проверьте путь
+which obfs4proxy
+ls -la /usr/local/bin/obfs4proxy
+```
+
 ### Tor не подключается (застрял на Bootstrap)
 
 #### Симптомы и решения
@@ -728,6 +931,7 @@ grep "ПОЛУЧЕННЫЙ_IP" /usr/local/www/ipfw_antizapret.dat
 | Tor Manual | https://2019.www.torproject.org/docs/tor-manual.html |
 | Bridge DB | https://bridges.torproject.org/ |
 | Tor Metrics | https://metrics.torproject.org/ |
+| FreeBSD Packages | https://pkg.freebsd.org/ |
 
 ### Связанная документация
 
@@ -763,3 +967,6 @@ TCyZuUjX3ymFmrDPxTmeSNPMuuWRDtviFy
 **[⬆ Вернуться наверх](#-настройка-tor-для-antizapret)**
 
 </div>
+5. **Проверка установки плагинов** — команды для проверки obfs4proxy и webtunnel
+
+6. **Новая секция "Транспортный плагин не найден"** — в разделе решения проблем
