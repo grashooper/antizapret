@@ -942,7 +942,7 @@ ExcludeNodes {RU}, {BY}, {KG}, {KZ}, {UZ}, {TJ}, {TM}, {TR}, {AZ}, {AM}
 ExcludeExitNodes {RU}, {BY}, {KG}, {KZ}, {UZ}, {TJ}, {TM}, {TR}, {AZ}, {AM}
 
 # Prefer Polish exit nodes (can be changed)
-ExitNodes {PL}
+# ExitNodes {PL}
 StrictNodes 1
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -968,6 +968,15 @@ ClientUseIPv6 1
 ClientUseIPv4 1
 ClientPreferIPv6ORPort 1
 ClientPreferIPv6DirPort 0
+
+EOF
+    else
+        cat >> "$TORRC_PATH" << 'EOF'
+# ─────────────────────────────────────────────────────────────────────────────
+# IPv6 CONFIGURATION
+# ─────────────────────────────────────────────────────────────────────────────
+ClientUseIPv6 0
+ClientPreferIPv6ORPort 0
 
 EOF
     fi
