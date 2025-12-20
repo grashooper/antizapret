@@ -1470,15 +1470,21 @@ EOF
 start_tor_service() {
     print_section_header "Starting Tor" "${SYM_ROCKET}"
     
-    # Stop if running
-    if pgrep -x tor >/dev/null 2>&1; then
-        print_action "Stopping existing Tor..."
-        service tor stop >/dev/null 2>&1 || pkill tor 2>/dev/null || true
-        sleep 2
+    # Проверяем наличие пользователя и группы _tor
+    print_action "Checking Tor user and group..."
+    if ! pw showuser "${TOR_USER}" >/dev/null 2>&1; then
+        print_error "User ${TOR_USER} does not exist!"
+        print_info "Creating user ${TOR_USER}..."
+        if ! pw groupadd -n "${TOR_GROUP}" -g 91 2>/dev/null; then
+            print_warning "Group ${TOR_GROUP} may already exist"
+        fi
+        
+        if ! pw useradd -n "${TOR_USER}" -u 91 -d /var/db/tor -s /usr/sbin/nologin -g "${TOR_GROUP}" -c "Tor Daemon User" 2>/dev/null; then
+            print_warning "User ${TOR_USER} may already exist"
+        fi
+    else
+        print_success "User ${TOR_USER} exists"
     fi
-    
-    # Remove stale PID file
-    rm -f "${PID_DIR}/tor.pid" 2>/dev/null
     
     # Ensure directories exist with correct permissions
     print_action "Setting up directories with correct permissions..."
@@ -1507,21 +1513,90 @@ start_tor_service() {
         return 1
     fi
     
+    # First try to start with service command
     print_action "Starting Tor service..."
     
+    # Stop if running
+    if pgrep -x tor >/dev/null 2>&1; then
+        print_subaction "Stopping existing Tor..."
+        service tor stop >/dev/null 2>&1 || pkill tor 2>/dev/null || true
+        sleep 2
+    fi
+    
+    # Remove stale PID file
+    rm -f "${PID_DIR}/tor.pid" 2>/dev/null
+    
+    # Try service command first
     if service tor start 2>&1; then
-        countdown 5 "Initializing"
-        
-        if pgrep -x tor >/dev/null 2>&1; then
-            local tor_pid=$(pgrep -x tor)
-            print_success "Tor is running! (PID: ${tor_pid})"
-            return 0
+        countdown 3 "Waiting for service to start"
+    else
+        print_warning "Service command failed, trying direct start..."
+        # If service fails, try direct start
+        if su -m "${TOR_USER}" -c "/usr/local/bin/tor -f ${TORRC_PATH} --RunAsDaemon 1 --PidFile ${PID_DIR}/tor.pid" 2>&1; then
+            print_success "Tor started directly"
+        else
+            print_error "Failed to start Tor"
+            print_info "Trying one more method..."
+            # Last attempt with different user context
+            /usr/local/bin/tor -f "${TORRC_PATH}" --RunAsDaemon 1 --PidFile "${PID_DIR}/tor.pid" 2>&1 || true
         fi
     fi
     
-    print_error "Failed to start Tor via service"
-    print_info "Check logs: tail -f ${LOG_DIR}/notices.log"
-    return 1
+    # Wait and check if running
+    countdown 5 "Checking Tor status"
+    
+    if pgrep -x tor >/dev/null 2>&1; then
+        local tor_pid=$(pgrep -x tor)
+        local tor_user_running=$(ps -o user= -p $tor_pid 2>/dev/null | tr -d ' ')
+        print_success "Tor is running! (PID: ${tor_pid}, User: ${tor_user_running})"
+        
+        # Check if listening on required ports
+        print_subaction "Checking open ports..."
+        local socks_port=$(sockstat -4l 2>/dev/null | grep ":9050" | grep "tor" | wc -l | tr -d ' ')
+        local trans_port=$(sockstat -4l 2>/dev/null | grep ":9040" | grep "tor" | wc -l | tr -d ' ')
+        
+        if [ "$socks_port" -gt 0 ]; then
+            print_subaction "SOCKS port 9050: OK"
+        else
+            print_warning "SOCKS port 9050 not listening"
+        fi
+        
+        if [ "$trans_port" -gt 0 ]; then
+            print_subaction "TransPort 9040: OK"
+        else
+            print_warning "TransPort 9040 not listening"
+        fi
+        
+        # Show log tail
+        if [ -f "${LOG_DIR}/notices.log" ]; then
+            print_subaction "Last 3 lines of log:"
+            tail -3 "${LOG_DIR}/notices.log" | sed 's/^/        /'
+        fi
+        
+        return 0
+    else
+        print_error "Tor is not running"
+        
+        # Check logs for errors
+        if [ -f "${LOG_DIR}/notices.log" ]; then
+            print_subaction "Last 5 lines of log:"
+            tail -5 "${LOG_DIR}/notices.log" | sed 's/^/        /'
+        fi
+        
+        # Try manual start for debugging
+        print_info "Trying manual start for debugging..."
+        echo ""
+        printf "      %sCommand: %s%s\n" "${C_YELLOW}" "tor -f ${TORRC_PATH}" "${C_RESET}"
+        echo ""
+        
+        if tor -f "${TORRC_PATH}" 2>&1 | head -20; then
+            print_info "Manual start successful, but not in daemon mode"
+        else
+            print_error "Manual start also failed"
+        fi
+        
+        return 1
+    fi
 }
 
 verify_installation() {
@@ -1542,21 +1617,21 @@ verify_installation() {
         errors=$((errors + 1))
     fi
     
-    if sockstat -4l 2>/dev/null | grep -q ":9050"; then
+    if sockstat -4l 2>/dev/null | grep -q ":9050.*tor"; then
         print_key_value_status "SOCKS (9050)" "OK" "ok"
     else
         print_key_value_status "SOCKS (9050)" "Not listening" "warn"
         warnings=$((warnings + 1))
     fi
     
-    if sockstat -4l 2>/dev/null | grep -q ":9053"; then
+    if sockstat -4l 2>/dev/null | grep -q ":9053.*tor"; then
         print_key_value_status "DNS (9053)" "OK" "ok"
     else
         print_key_value_status "DNS (9053)" "Not listening" "warn"
         warnings=$((warnings + 1))
     fi
     
-    if sockstat -4l 2>/dev/null | grep -q ":9040"; then
+    if sockstat -4l 2>/dev/null | grep -q ":9040.*tor"; then
         print_key_value_status "TransPort (9040)" "OK" "ok"
     else
         print_key_value_status "TransPort (9040)" "Not listening" "warn"
