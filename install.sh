@@ -5,56 +5,56 @@
 # ║                    AntiZapret Installation Script                         ║
 # ║                      for OPNsense / FreeBSD                               ║
 # ║                                                                           ║
-# ║                           Version 3.0                                     ║
+# ║                           Version 3.5                                     ║
 # ║                                                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
-
-set -e
 
 # ════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION & CONSTANTS
 # ════════════════════════════════════════════════════════════════════════════
 
-VERSION="3.0"
+VERSION="3.5"
 SCRIPT_NAME="AntiZapret Installer"
 
 # Paths
 TORRC_PATH="/usr/local/etc/tor/torrc"
+TOR_RC_SCRIPT="/usr/local/etc/rc.d/tor"
+TOR_RC_CONF="/etc/rc.conf.d/tor"
 SCRIPT_DIR="/root/antizapret"
 LOG_DIR="/var/log/tor"
 PID_DIR="/var/run/tor"
+DATA_DIR="/var/db/tor"
 IP_LIST_PATH="/usr/local/www/ipfw_antizapret.dat"
 ACTIONS_DIR="/usr/local/opnsense/service/conf/actions.d"
+FREEBSD_REPO_CONF="/usr/local/etc/pkg/repos/FreeBSD.conf"
+
+# Tor user/group
+TOR_USER="_tor"
+TOR_GROUP="_tor"
 
 # Default settings
 USE_IPV6="yes"
+USE_BRIDGES="no"
 OBFS4_BRIDGES=""
 WEBTUNNEL_BRIDGES=""
-SELECTED_PACKAGES=""
 LOCAL_IP=""
+FREEBSD_REPO_ENABLED="no"
 
-# Package URLs base
-PKG_BASE_URL="https://pkg.freebsd.org/FreeBSD"
+# FreeBSD package repository
+PKG_FREEBSD_BASE="https://pkg.freebsd.org/FreeBSD"
 
 # ════════════════════════════════════════════════════════════════════════════
 # COLOR DEFINITIONS
 # ════════════════════════════════════════════════════════════════════════════
 
 setup_colors() {
-    # Check if colors are supported
     if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; then
-        # Basic colors - using printf to properly interpret escape sequences
         C_RESET=$(printf '\033[0m')
         C_BOLD=$(printf '\033[1m')
         C_DIM=$(printf '\033[2m')
-        C_ITALIC=$(printf '\033[3m')
         C_UNDERLINE=$(printf '\033[4m')
-        C_BLINK=$(printf '\033[5m')
-        C_REVERSE=$(printf '\033[7m')
         
-        # Foreground colors
-        C_BLACK=$(printf '\033[0;30m')
         C_RED=$(printf '\033[0;31m')
         C_GREEN=$(printf '\033[0;32m')
         C_YELLOW=$(printf '\033[0;33m')
@@ -63,7 +63,6 @@ setup_colors() {
         C_CYAN=$(printf '\033[0;36m')
         C_WHITE=$(printf '\033[0;37m')
         
-        # Bright foreground colors
         C_BRED=$(printf '\033[1;31m')
         C_BGREEN=$(printf '\033[1;32m')
         C_BYELLOW=$(printf '\033[1;33m')
@@ -72,7 +71,6 @@ setup_colors() {
         C_BCYAN=$(printf '\033[1;36m')
         C_BWHITE=$(printf '\033[1;37m')
         
-        # Background colors
         C_BG_BLACK=$(printf '\033[40m')
         C_BG_RED=$(printf '\033[41m')
         C_BG_GREEN=$(printf '\033[42m')
@@ -82,30 +80,19 @@ setup_colors() {
         C_BG_CYAN=$(printf '\033[46m')
         C_BG_WHITE=$(printf '\033[47m')
         
-        # 256 color support (for gradients)
         C_ORANGE=$(printf '\033[38;5;208m')
-        C_PINK=$(printf '\033[38;5;213m')
         C_PURPLE=$(printf '\033[38;5;141m')
-        C_LIME=$(printf '\033[38;5;154m')
-        C_TEAL=$(printf '\033[38;5;80m')
         C_GOLD=$(printf '\033[38;5;220m')
-        C_CORAL=$(printf '\033[38;5;209m')
         C_SKY=$(printf '\033[38;5;117m')
-        
-        COLORS_ENABLED=1
     else
-        # No colors
-        C_RESET='' C_BOLD='' C_DIM='' C_ITALIC='' C_UNDERLINE=''
-        C_BLINK='' C_REVERSE=''
-        C_BLACK='' C_RED='' C_GREEN='' C_YELLOW='' C_BLUE=''
+        C_RESET='' C_BOLD='' C_DIM='' C_UNDERLINE=''
+        C_RED='' C_GREEN='' C_YELLOW='' C_BLUE=''
         C_MAGENTA='' C_CYAN='' C_WHITE=''
         C_BRED='' C_BGREEN='' C_BYELLOW='' C_BBLUE=''
         C_BMAGENTA='' C_BCYAN='' C_BWHITE=''
         C_BG_BLACK='' C_BG_RED='' C_BG_GREEN='' C_BG_YELLOW=''
         C_BG_BLUE='' C_BG_MAGENTA='' C_BG_CYAN='' C_BG_WHITE=''
-        C_ORANGE='' C_PINK='' C_PURPLE='' C_LIME=''
-        C_TEAL='' C_GOLD='' C_CORAL='' C_SKY=''
-        COLORS_ENABLED=0
+        C_ORANGE='' C_PURPLE='' C_GOLD='' C_SKY=''
     fi
 }
 
@@ -113,16 +100,6 @@ setup_colors() {
 # UI ELEMENTS & FORMATTING
 # ════════════════════════════════════════════════════════════════════════════
 
-# Box drawing characters
-BOX_TL='╔' BOX_TR='╗' BOX_BL='╚' BOX_BR='╝'
-BOX_H='═' BOX_V='║'
-BOX_LT='╠' BOX_RT='╣' BOX_TT='╦' BOX_BT='╩' BOX_X='╬'
-
-# Single line box
-SBOX_TL='┌' SBOX_TR='┐' SBOX_BL='└' SBOX_BR='┘'
-SBOX_H='─' SBOX_V='│'
-
-# Symbols
 SYM_CHECK='✓'
 SYM_CROSS='✗'
 SYM_ARROW='➜'
@@ -130,7 +107,6 @@ SYM_BULLET='●'
 SYM_DIAMOND='◆'
 SYM_STAR='★'
 SYM_CIRCLE='○'
-SYM_SQUARE='■'
 SYM_TRIANGLE='▶'
 SYM_INFO='ℹ'
 SYM_WARN='⚠'
@@ -139,7 +115,6 @@ SYM_LOCK='🔒'
 SYM_GLOBE='🌐'
 SYM_ROCKET='🚀'
 SYM_PACKAGE='📦'
-SYM_FOLDER='📁'
 SYM_FILE='📄'
 SYM_CLOCK='🕐'
 SYM_SHIELD='🛡'
@@ -234,12 +209,6 @@ print_subsection_end() {
     printf "┘%s\n" "${C_RESET}"
 }
 
-print_step() {
-    local step_num="$1"
-    local message="$2"
-    printf "    %s%s STEP %s %s %s%s%s %s%s%s\n" "${C_BG_MAGENTA}" "${C_BWHITE}" "$step_num" "${C_RESET}" "${C_BMAGENTA}" "${SYM_ARROW}" "${C_RESET}" "${C_BOLD}" "$message" "${C_RESET}"
-}
-
 print_action() {
     printf "    %s%s%s %s%s%s\n" "${C_BCYAN}" "${SYM_TRIANGLE}" "${C_RESET}" "${C_CYAN}" "$1" "${C_RESET}"
 }
@@ -264,20 +233,6 @@ print_info() {
     printf "    %s%s%s %s%s%s\n" "${C_BCYAN}" "${SYM_INFO}" "${C_RESET}" "${C_CYAN}" "$1" "${C_RESET}"
 }
 
-print_bullet() {
-    printf "      %s%s%s %s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "$1"
-}
-
-print_diamond() {
-    printf "      %s%s%s %s\n" "${C_GOLD}" "${SYM_DIAMOND}" "${C_RESET}" "$1"
-}
-
-print_numbered() {
-    local num="$1"
-    local text="$2"
-    printf "      %s%s %s %s %s\n" "${C_BG_CYAN}" "${C_BLACK}" "$num" "${C_RESET}" "$text"
-}
-
 print_key_value() {
     local key="$1"
     local value="$2"
@@ -289,7 +244,7 @@ print_key_value() {
 print_key_value_status() {
     local key="$1"
     local value="$2"
-    local status="$3"  # "ok", "warn", "error"
+    local status="$3"
     local icon
     local color
     
@@ -333,83 +288,6 @@ print_box_message() {
     i=0
     while [ $i -lt $box_width ]; do printf "─"; i=$((i + 1)); done
     printf "┘%s\n" "${C_RESET}"
-}
-
-# ════════════════════════════════════════════════════════════════════════════
-# ANIMATED ELEMENTS
-# ════════════════════════════════════════════════════════════════════════════
-
-spinner_frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-
-spinner() {
-    local pid=$1
-    local message="${2:-Processing...}"
-    local delay=0.1
-    local i=0
-    local frame
-    local color
-    
-    printf "      "
-    
-    while ps -p "$pid" > /dev/null 2>&1; do
-        local frame_idx=$((i % 10))
-        frame=$(echo "$spinner_frames" | cut -c$((frame_idx + 1)))
-        
-        case $((i % 6)) in
-            0) color="${C_CYAN}" ;;
-            1) color="${C_BBLUE}" ;;
-            2) color="${C_MAGENTA}" ;;
-            3) color="${C_BRED}" ;;
-            4) color="${C_BYELLOW}" ;;
-            5) color="${C_BGREEN}" ;;
-        esac
-        
-        printf "\r      %s%s%s %s%s%s   " "$color" "$frame" "${C_RESET}" "${C_DIM}" "$message" "${C_RESET}"
-        sleep $delay
-        i=$((i + 1))
-    done
-    
-    printf "\r      %s%s%s %s%s%s   \n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$message" "${C_RESET}"
-}
-
-progress_bar() {
-    local current=$1
-    local total=$2
-    local message="${3:-}"
-    local width=40
-    local percent=$((current * 100 / total))
-    local filled=$((current * width / total))
-    local empty=$((width - filled))
-    local i
-    
-    printf "\r      %s[%s" "${C_DIM}" "${C_RESET}"
-    
-    # Gradient progress bar
-    i=0
-    while [ $i -lt $filled ]; do
-        case $((i * 6 / width)) in
-            0) printf "%s█" "${C_RED}" ;;
-            1) printf "%s█" "${C_ORANGE}" ;;
-            2) printf "%s█" "${C_YELLOW}" ;;
-            3) printf "%s█" "${C_GREEN}" ;;
-            4) printf "%s█" "${C_CYAN}" ;;
-            5) printf "%s█" "${C_BLUE}" ;;
-        esac
-        i=$((i + 1))
-    done
-    
-    printf "%s" "${C_DIM}"
-    i=0
-    while [ $i -lt $empty ]; do
-        printf "░"
-        i=$((i + 1))
-    done
-    
-    printf "%s%s]%s %s%3d%%%s" "${C_RESET}" "${C_DIM}" "${C_RESET}" "${C_BWHITE}" "$percent" "${C_RESET}"
-    
-    if [ -n "$message" ]; then
-        printf " %s%s%s" "${C_DIM}" "$message" "${C_RESET}"
-    fi
 }
 
 countdown() {
@@ -470,22 +348,6 @@ prompt_input() {
     eval "$var_name=\"\$result\""
 }
 
-prompt_multiline() {
-    local prompt_prefix="$1"
-    local var_name="$2"
-    local result=""
-    local line
-    
-    while true; do
-        printf "      %s%s%s%s>%s " "${C_PURPLE}" "$prompt_prefix" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-        read line
-        [ -z "$line" ] && break
-        result="${result}${line}\n"
-    done
-    
-    eval "$var_name=\"\$result\""
-}
-
 # ════════════════════════════════════════════════════════════════════════════
 # SYSTEM DETECTION
 # ════════════════════════════════════════════════════════════════════════════
@@ -522,15 +384,14 @@ detect_system() {
     # Detect OPNsense
     if [ -d "/usr/local/opnsense" ]; then
         IS_OPNSENSE="yes"
-        if [ -f "/usr/local/opnsense/version/core" ]; then
-            OPNSENSE_VERSION=$(cat /usr/local/opnsense/version/core 2>/dev/null)
-        else
-            OPNSENSE_VERSION="unknown"
-        fi
+        OPNSENSE_VERSION=$(opnsense-version -v 2>/dev/null || echo "unknown")
     else
         IS_OPNSENSE="no"
         OPNSENSE_VERSION=""
     fi
+    
+    # Build FreeBSD package URL
+    PKG_FREEBSD_URL="${PKG_FREEBSD_BASE}:${OS_VERSION}:${ARCH}/latest/All"
     
     echo ""
     print_subsection "System Information"
@@ -552,10 +413,7 @@ detect_system() {
 detect_network() {
     print_action "Detecting network configuration..."
     
-    # Get default interface
     DEFAULT_IFACE=$(route -n get default 2>/dev/null | grep interface | awk '{print $2}')
-    
-    # Get all interfaces with IPs
     ALL_INTERFACES=$(ifconfig | grep -E "^[a-z]" | cut -d: -f1)
     
     echo ""
@@ -573,7 +431,7 @@ detect_network() {
             local status_icon="${SYM_BULLET}"
             
             if [ "$iface" = "$DEFAULT_IFACE" ]; then
-                marker=" (default)"
+                marker=" (WAN)"
                 status_color="${C_YELLOW}"
                 status_icon="${SYM_CIRCLE}"
             fi
@@ -590,7 +448,6 @@ detect_network() {
     echo ""
     print_subsection_end
     
-    # Confirm or change IP
     if [ -n "$LOCAL_IP" ]; then
         echo ""
         printf "    %s%s%s Detected LAN IP: %s%s%s\n" "${C_BCYAN}" "${SYM_INFO}" "${C_RESET}" "${C_BWHITE}" "${LOCAL_IP}" "${C_RESET}"
@@ -608,75 +465,78 @@ detect_network() {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
+# FreeBSD REPOSITORY MANAGEMENT
+# ════════════════════════════════════════════════════════════════════════════
+
+enable_freebsd_repo() {
+    print_subaction "Enabling FreeBSD repository temporarily..."
+    
+    if [ -f "$FREEBSD_REPO_CONF" ]; then
+        cp "$FREEBSD_REPO_CONF" "${FREEBSD_REPO_CONF}.bak" 2>/dev/null
+    fi
+    
+    cat > "$FREEBSD_REPO_CONF" << 'REPOEOF'
+FreeBSD: {
+  url: "pkg+https://pkg.freebsd.org/${ABI}/latest",
+  mirror_type: "srv",
+  signature_type: "fingerprints",
+  fingerprints: "/usr/share/keys/pkg",
+  enabled: yes
+}
+REPOEOF
+    
+    print_subaction "Updating package catalog..."
+    pkg update -f >/dev/null 2>&1 || true
+    
+    FREEBSD_REPO_ENABLED="yes"
+    print_success "FreeBSD repository enabled"
+}
+
+disable_freebsd_repo() {
+    if [ "$FREEBSD_REPO_ENABLED" = "yes" ]; then
+        print_subaction "Disabling FreeBSD repository..."
+        
+        if [ -f "${FREEBSD_REPO_CONF}.bak" ]; then
+            mv "${FREEBSD_REPO_CONF}.bak" "$FREEBSD_REPO_CONF" 2>/dev/null
+        else
+            cat > "$FREEBSD_REPO_CONF" << 'REPOEOF'
+FreeBSD: { enabled: no }
+FreeBSD-kmods: { enabled: no }
+REPOEOF
+        fi
+        
+        pkg update -f >/dev/null 2>&1 || true
+        FREEBSD_REPO_ENABLED="no"
+        print_success "FreeBSD repository disabled"
+    fi
+}
+
+search_freebsd_package() {
+    local pkg_name="$1"
+    local result=""
+    
+    result=$(pkg search -r FreeBSD -e -Q name "$pkg_name" 2>/dev/null | head -1)
+    
+    if [ -n "$result" ]; then
+        echo "$result"
+        return 0
+    fi
+    
+    result=$(pkg rquery -r FreeBSD '%n-%v' "$pkg_name" 2>/dev/null | head -1)
+    
+    if [ -n "$result" ]; then
+        echo "$result"
+        return 0
+    fi
+    
+    return 1
+}
+
+# ════════════════════════════════════════════════════════════════════════════
 # PACKAGE MANAGEMENT
 # ════════════════════════════════════════════════════════════════════════════
 
-show_package_menu() {
-    print_section_header "Package Selection" "${SYM_PACKAGE}"
-    
-    print_info "Select optional packages to install alongside Tor"
-    echo ""
-    
-    print_subsection "Available Packages"
-    echo ""
-    
-    printf "      %s%s 1 %s %smc%s        %sMidnight Commander - Visual file manager%s\n" "${C_BG_CYAN}" "${C_BLACK}" "${C_RESET}" "${C_BCYAN}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-    printf "      %s%s 2 %s %sgit%s       %sGit - Version control system%s\n" "${C_BG_GREEN}" "${C_BLACK}" "${C_RESET}" "${C_BGREEN}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-    printf "      %s%s 3 %s %scurl%s      %scURL - Data transfer tool%s\n" "${C_BG_YELLOW}" "${C_BLACK}" "${C_RESET}" "${C_BYELLOW}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-    printf "      %s%s 4 %s %swget%s      %sWget - File download utility%s\n" "${C_BG_MAGENTA}" "${C_BLACK}" "${C_RESET}" "${C_BMAGENTA}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-    printf "      %s%s 5 %s %snano%s      %sNano - Text editor%s\n" "${C_BG_BLUE}" "${C_BLACK}" "${C_RESET}" "${C_BBLUE}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-    echo ""
-    printf "      %s%s A %s %sAll%s       %sInstall all packages%s\n" "${C_BG_WHITE}" "${C_BLACK}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-    printf "      %s%s 0 %s %sNone%s      %sSkip optional packages%s\n" "${C_BG_RED}" "${C_BLACK}" "${C_RESET}" "${C_RED}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-    
-    echo ""
-    print_subsection_end
-    echo ""
-    
-    prompt_input "Enter selection (e.g., 1 2 3 or A for all)" PACKAGE_SELECTION "A"
-    
-    SELECTED_PACKAGES=""
-    
-    case "$PACKAGE_SELECTION" in
-        *[Aa]*)
-            SELECTED_PACKAGES="mc git curl wget nano"
-            ;;
-        *0*)
-            SELECTED_PACKAGES=""
-            ;;
-        *)
-            echo "$PACKAGE_SELECTION" | grep -q "1" && SELECTED_PACKAGES="$SELECTED_PACKAGES mc"
-            echo "$PACKAGE_SELECTION" | grep -q "2" && SELECTED_PACKAGES="$SELECTED_PACKAGES git"
-            echo "$PACKAGE_SELECTION" | grep -q "3" && SELECTED_PACKAGES="$SELECTED_PACKAGES curl"
-            echo "$PACKAGE_SELECTION" | grep -q "4" && SELECTED_PACKAGES="$SELECTED_PACKAGES wget"
-            echo "$PACKAGE_SELECTION" | grep -q "5" && SELECTED_PACKAGES="$SELECTED_PACKAGES nano"
-            ;;
-    esac
-    
-    SELECTED_PACKAGES=$(echo "$SELECTED_PACKAGES" | xargs)
-    
-    echo ""
-    if [ -n "$SELECTED_PACKAGES" ]; then
-        printf "    %s%s%s Selected packages: %s%s%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_BWHITE}" "${SELECTED_PACKAGES}" "${C_RESET}"
-    else
-        print_info "No optional packages selected"
-    fi
-}
-
-get_latest_package_url() {
-    local package_name=$1
-    local base_url="${PKG_BASE_URL}:${OS_VERSION}:${ARCH}/latest/All"
-    
-    local pkg_file=$(fetch -qo - "${base_url}/" 2>/dev/null | \
-                     grep -o "href=\"${package_name}-[^\"]*\.pkg\"" | \
-                     sed 's/href="//;s/"//' | sort -V | tail -n 1)
-    
-    if [ -n "$pkg_file" ]; then
-        echo "${base_url}/${pkg_file}"
-    fi
-}
-
-install_package() {
+install_opnsense_package() {
     local pkg_name="$1"
     local pkg_desc="${2:-$pkg_name}"
     
@@ -685,179 +545,394 @@ install_package() {
         return 0
     fi
     
-    local pkg_url=$(get_latest_package_url "$pkg_name")
+    print_subaction "Installing ${pkg_name}..."
     
-    if [ -n "$pkg_url" ]; then
-        pkg add "$pkg_url" >/dev/null 2>&1 &
-        spinner $! "Installing ${pkg_desc}..."
-    else
-        pkg install -y "$pkg_name" >/dev/null 2>&1 &
-        spinner $! "Installing ${pkg_desc}..."
+    if pkg install -y "$pkg_name" >/dev/null 2>&1; then
+        if pkg info "$pkg_name" >/dev/null 2>&1; then
+            printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+            return 0
+        fi
     fi
+    
+    print_warning "Failed to install ${pkg_desc}"
+    return 1
+}
+
+install_transport_plugin() {
+    local pkg_name="$1"
+    local pkg_desc="${2:-$pkg_name}"
     
     if pkg info "$pkg_name" >/dev/null 2>&1; then
+        printf "    %s%s%s %s%s %s(already installed)%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_DIM}" "${C_RESET}"
         return 0
+    fi
+    
+    print_subaction "Searching for ${pkg_name} in FreeBSD repository..."
+    
+    # Method 1: Direct pkg install
+    print_subaction "Trying pkg install from FreeBSD repo..."
+    if pkg install -r FreeBSD -y "$pkg_name" >/dev/null 2>&1; then
+        if pkg info "$pkg_name" >/dev/null 2>&1; then
+            printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+            return 0
+        fi
+    fi
+    
+    # Method 2: Search and pkg add
+    print_subaction "Searching for package version..."
+    local pkg_fullname=""
+    pkg_fullname=$(search_freebsd_package "$pkg_name")
+    
+    if [ -n "$pkg_fullname" ]; then
+        local pkg_url="${PKG_FREEBSD_URL}/${pkg_fullname}.pkg"
+        print_subaction "Found: ${pkg_fullname}"
+        print_subaction "Downloading from: ${pkg_url}"
+        
+        if pkg add "$pkg_url" 2>/dev/null; then
+            if pkg info "$pkg_name" >/dev/null 2>&1; then
+                printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Method 3: HTML parsing
+    print_subaction "Trying HTML parsing method..."
+    local html_content=""
+    local pkg_file=""
+    
+    html_content=$(fetch -qo - "${PKG_FREEBSD_URL}/" 2>/dev/null)
+    
+    if [ -n "$html_content" ]; then
+        pkg_file=$(echo "$html_content" | \
+                   grep -oE "\"${pkg_name}-[0-9][^\"]*\.pkg\"" | \
+                   tr -d '"' | \
+                   sort -V | \
+                   tail -1)
+        
+        if [ -n "$pkg_file" ]; then
+            local pkg_url="${PKG_FREEBSD_URL}/${pkg_file}"
+            print_subaction "Found: ${pkg_file}"
+            
+            if pkg add "$pkg_url" 2>/dev/null; then
+                if pkg info "$pkg_name" >/dev/null 2>&1; then
+                    printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+    
+    # Method 4: Known versions fallback
+    print_subaction "Trying known versions..."
+    local versions=""
+    case "$pkg_name" in
+        obfs4proxy-tor)
+            versions="0.0.14_25 0.0.14_24 0.0.14_23 0.0.14_22 0.0.14_21 0.0.14_20 0.0.14_19 0.0.14_18 0.0.14_17"
+            ;;
+        webtunnel-tor)
+            versions="0.0.1_25 0.0.1_24 0.0.1_23 0.0.1_22 0.0.1_21 0.0.1_20 0.0.1_19 0.0.1_18 0.0.1_17 0.0.1_16 0.0.1_15"
+            ;;
+    esac
+    
+    for ver in $versions; do
+        pkg_file="${pkg_name}-${ver}.pkg"
+        local pkg_url="${PKG_FREEBSD_URL}/${pkg_file}"
+        
+        print_subaction "Trying ${pkg_file}..."
+        
+        if pkg add "$pkg_url" 2>/dev/null; then
+            if pkg info "$pkg_name" >/dev/null 2>&1; then
+                printf "    %s%s%s %s%s (v%s) installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "$ver" "${C_RESET}"
+                return 0
+            fi
+        fi
+    done
+    
+    # Method 5: Manual input
+    echo ""
+    print_error "Automatic installation failed"
+    echo ""
+    print_info "Check current version at:"
+    printf "      %s● https://ports.freebsd.org/cgi/ports.cgi?query=%s%s\n" "${C_CYAN}" "${pkg_name}" "${C_RESET}"
+    printf "      %s● %s%s\n" "${C_CYAN}" "${PKG_FREEBSD_URL}/" "${C_RESET}"
+    echo ""
+    
+    if prompt_yes_no "Enter version manually?" "Y"; then
+        prompt_input "Package version (e.g., 0.0.1_21)" manual_version ""
+        
+        if [ -n "$manual_version" ]; then
+            pkg_file="${pkg_name}-${manual_version}.pkg"
+            local pkg_url="${PKG_FREEBSD_URL}/${pkg_file}"
+            
+            print_subaction "Installing ${pkg_url}..."
+            
+            if pkg add "$pkg_url" 2>/dev/null; then
+                if pkg info "$pkg_name" >/dev/null 2>&1; then
+                    printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+    
+    print_error "Failed to install ${pkg_desc}"
+    return 1
+}
+
+ask_and_install_package() {
+    local pkg_name="$1"
+    local pkg_desc="$2"
+    local pkg_info="$3"
+    
+    echo ""
+    printf "    %s%s%s %s%s%s - %s%s%s\n" "${C_BBLUE}" "${SYM_PACKAGE}" "${C_RESET}" "${C_BCYAN}" "$pkg_name" "${C_RESET}" "${C_DIM}" "$pkg_info" "${C_RESET}"
+    
+    if prompt_yes_no "Install ${pkg_desc}?" "N"; then
+        install_opnsense_package "$pkg_name" "$pkg_desc"
+        return $?
     else
-        print_warning "Failed to install ${pkg_desc}"
-        return 1
+        print_info "Skipping ${pkg_desc}"
+        return 0
     fi
 }
 
-install_packages() {
-    print_section_header "Installing Packages" "${SYM_PACKAGE}"
+install_optional_packages() {
+    print_section_header "Optional Packages" "${SYM_PACKAGE}"
     
-    local total_packages=0
-    local current=0
+    print_info "The following optional packages can be installed:"
+    echo ""
+    printf "      %s%s%s %smc%s        - Midnight Commander (visual file manager)\n" "${C_CYAN}" "${SYM_BULLET}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
+    printf "      %s%s%s %sgit%s       - Version control system (required for AntiZapret)\n" "${C_CYAN}" "${SYM_BULLET}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
+    printf "      %s%s%s %scurl%s      - Data transfer tool\n" "${C_CYAN}" "${SYM_BULLET}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
+    printf "      %s%s%s %swget%s      - File download utility\n" "${C_CYAN}" "${SYM_BULLET}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
+    printf "      %s%s%s %snano%s      - Simple text editor\n" "${C_CYAN}" "${SYM_BULLET}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
     
-    # Count packages
-    for pkg in $SELECTED_PACKAGES; do
-        total_packages=$((total_packages + 1))
-    done
-    total_packages=$((total_packages + 4))  # Add Tor packages
+    echo ""
+    print_info "You will be asked about each package individually"
+    echo ""
     
-    # Install optional packages
-    if [ -n "$SELECTED_PACKAGES" ]; then
-        print_action "Installing optional packages..."
-        echo ""
-        
-        for pkg in $SELECTED_PACKAGES; do
-            current=$((current + 1))
-            progress_bar $current $total_packages "$pkg"
-            echo ""
-            install_package "$pkg"
-        done
-        
-        echo ""
+    printf "    %s%s%s %s%s%s - %s%s%s\n" "${C_BBLUE}" "${SYM_PACKAGE}" "${C_RESET}" "${C_BCYAN}" "git" "${C_RESET}" "${C_DIM}" "Required for AntiZapret updates" "${C_RESET}"
+    if prompt_yes_no "Install git? (Recommended)" "Y"; then
+        install_opnsense_package "git" "Git"
+    else
+        print_warning "Git is required for AntiZapret"
     fi
     
-    # Install Tor packages
-    print_action "Installing Tor and plugins..."
-    echo ""
-    
-    local tor_packages="zstd tor obfs4proxy-tor webtunnel-tor"
-    
-    for pkg in $tor_packages; do
-        current=$((current + 1))
-        progress_bar $current $total_packages "$pkg"
-        echo ""
-        
-        case "$pkg" in
-            zstd) install_package "$pkg" "Zstandard compression" ;;
-            tor) install_package "$pkg" "Tor anonymity network" ;;
-            obfs4proxy-tor) install_package "$pkg" "OBFS4 transport plugin" ;;
-            webtunnel-tor) install_package "$pkg" "WebTunnel transport plugin" ;;
-            *) install_package "$pkg" ;;
-        esac
-    done
+    ask_and_install_package "mc" "Midnight Commander" "Visual file manager"
+    ask_and_install_package "curl" "cURL" "Data transfer tool"
+    ask_and_install_package "wget" "Wget" "File download utility"
+    ask_and_install_package "nano" "Nano" "Text editor"
     
     echo ""
-    print_success "All packages installed successfully"
+    print_success "Optional packages installation complete"
+}
+
+install_tor_packages() {
+    print_section_header "Installing Tor" "${SYM_LOCK}"
+    
+    print_action "Installing Tor from OPNsense repository..."
+    install_opnsense_package "tor" "Tor"
+    
+    if ! pkg info tor >/dev/null 2>&1; then
+        print_error "Failed to install Tor - cannot continue"
+        exit 1
+    fi
+    
+    echo ""
+    print_success "Tor installed successfully"
 }
 
 # ════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
+# BRIDGE CONFIGURATION
 # ════════════════════════════════════════════════════════════════════════════
 
-configure_ipv6() {
-    print_section_header "IPv6 Configuration" "${SYM_GLOBE}"
-    
-    print_info "IPv6 can improve Tor connectivity in many networks"
-    echo ""
-    
-    printf "      %s%s%s Recommended for most modern networks\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}"
-    printf "      %s%s%s Disable if your ISP blocks IPv6\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}"
-    printf "      %s%s%s Can be changed later in %s/usr/local/etc/tor/torrc%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_CYAN}" "${C_RESET}"
-    
-    echo ""
-    
-    if prompt_yes_no "Enable IPv6 support in Tor?" "Y"; then
-        USE_IPV6="yes"
-        printf "    %s%s%s IPv6 support: %sEnabled%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_BGREEN}" "${C_RESET}"
-    else
-        USE_IPV6="no"
-        printf "    %s%s%s IPv6 support: %sDisabled%s\n" "${C_BCYAN}" "${SYM_INFO}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}"
-    fi
-}
-
-configure_bridges() {
+ask_about_bridges() {
     print_section_header "Tor Bridge Configuration" "${SYM_LOCK}"
     
     echo ""
     print_box_message "Bridges help bypass Tor censorship in restricted regions" "$C_CYAN"
     echo ""
     
-    print_info "You only need bridges if:"
-    printf "      %s%s%s Direct Tor connections are blocked in your country\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}"
-    printf "      %s%s%s Your ISP actively blocks Tor traffic\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}"
-    printf "      %s%s%s You're in a high-censorship environment\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}"
+    print_info "You need bridges if:"
+    printf "      %s%s%s Direct Tor connections are blocked\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}"
+    printf "      %s%s%s Your ISP blocks Tor traffic\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}"
+    printf "      %s%s%s You're in China, Iran, Russia, etc.\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}"
+    
+    echo ""
+    print_warning "Bridge plugins require FreeBSD repository (not available in OPNsense)"
     
     echo ""
     
-    if ! prompt_yes_no "Configure Tor bridges?" "N"; then
+    if prompt_yes_no "Do you want to use Tor bridges?" "N"; then
+        USE_BRIDGES="yes"
+        install_bridge_plugins
+        configure_bridges
+    else
+        USE_BRIDGES="no"
         OBFS4_BRIDGES=""
         WEBTUNNEL_BRIDGES=""
         echo ""
-        print_info "Skipping bridges - Tor will connect directly"
-        return
+        print_info "Tor will connect directly without bridges"
+    fi
+}
+
+install_bridge_plugins() {
+    print_section_header "Installing Bridge Plugins" "${SYM_PACKAGE}"
+    
+    print_warning "These packages require FreeBSD repository"
+    echo ""
+    
+    enable_freebsd_repo
+    
+    printf "    %s%s%s %s%s%s\n" "${C_BBLUE}" "${SYM_PACKAGE}" "${C_RESET}" "${C_BCYAN}" "obfs4proxy-tor" "${C_RESET}"
+    print_info "OBFS4 - Makes Tor traffic look like random noise"
+    
+    if prompt_yes_no "Install OBFS4 plugin?" "Y"; then
+        install_transport_plugin "obfs4proxy-tor" "OBFS4"
     fi
     
     echo ""
-    print_subsection "Bridge Information"
+    
+    printf "    %s%s%s %s%s%s\n" "${C_BBLUE}" "${SYM_PACKAGE}" "${C_RESET}" "${C_BCYAN}" "webtunnel-tor" "${C_RESET}"
+    print_info "WebTunnel - Makes Tor traffic look like HTTPS"
+    
+    if prompt_yes_no "Install WebTunnel plugin?" "Y"; then
+        install_transport_plugin "webtunnel-tor" "WebTunnel"
+    fi
+    
+    echo ""
+    disable_freebsd_repo
+    
+    echo ""
+    print_subsection "Plugin Status"
     echo ""
     
-    printf "    %s%s%s %sGet bridges from:%s\n" "${C_GOLD}" "${SYM_STAR}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
-    printf "      %s%s%s Web:   %s%shttps://bridges.torproject.org/%s\n" "${C_CYAN}" "${SYM_GLOBE}" "${C_RESET}" "${C_UNDERLINE}" "${C_BBLUE}" "${C_RESET}"
-    printf "      %s%s%s Email: %sbridges@torproject.org%s\n" "${C_MAGENTA}" "${SYM_INFO}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
+    if pkg info obfs4proxy-tor >/dev/null 2>&1; then
+        print_key_value_status "OBFS4" "Installed" "ok"
+    else
+        print_key_value_status "OBFS4" "Not installed" "warn"
+    fi
+    
+    if pkg info webtunnel-tor >/dev/null 2>&1; then
+        print_key_value_status "WebTunnel" "Installed" "ok"
+    else
+        print_key_value_status "WebTunnel" "Not installed" "warn"
+    fi
+    
+    echo ""
+    print_subsection_end
+}
+
+configure_bridges() {
+    echo ""
+    print_subsection "Bridge Configuration"
+    echo ""
+    
+    printf "    %s%s%s %sGet bridges:%s\n" "${C_GOLD}" "${SYM_STAR}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
+    printf "      %s%s%s https://bridges.torproject.org/%s\n" "${C_CYAN}" "${SYM_GLOBE}" "${C_RESET}" "${C_RESET}"
+    printf "      %s%s%s bridges@torproject.org%s\n" "${C_MAGENTA}" "${SYM_INFO}" "${C_RESET}" "${C_RESET}"
+    printf "      %s%s%s @GetBridgesBot (Telegram)%s\n" "${C_BLUE}" "${SYM_INFO}" "${C_RESET}" "${C_RESET}"
     
     echo ""
     print_subsection_end
     echo ""
     
-    printf "    %sPress Enter when you have your bridge lines ready...%s" "${C_DIM}" "${C_RESET}"
-    read dummy
-    
     # OBFS4 bridges
-    echo ""
-    printf "    %s%s%s Enter OBFS4 bridge lines %s(empty line to finish)%s\n" "${C_BCYAN}" "${SYM_TRIANGLE}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-    echo ""
-    
-    OBFS4_BRIDGES=""
-    while true; do
-        printf "      %sobfs4%s%s>%s " "${C_PURPLE}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-        read bridge_line
-        [ -z "$bridge_line" ] && break
+    if pkg info obfs4proxy-tor >/dev/null 2>&1; then
+        printf "    %s%s%s Enter OBFS4 bridges %s(empty line to finish)%s\n" "${C_BCYAN}" "${SYM_TRIANGLE}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
+        echo ""
         
-        if echo "$bridge_line" | grep -q "^Bridge"; then
-            OBFS4_BRIDGES="${OBFS4_BRIDGES}${bridge_line}\n"
-        else
-            OBFS4_BRIDGES="${OBFS4_BRIDGES}Bridge obfs4 ${bridge_line}\n"
-        fi
-    done
+        OBFS4_BRIDGES=""
+        while true; do
+            printf "      %sobfs4>%s " "${C_PURPLE}" "${C_RESET}"
+            read bridge_line
+            [ -z "$bridge_line" ] && break
+            
+            if echo "$bridge_line" | grep -q "^Bridge"; then
+                OBFS4_BRIDGES="${OBFS4_BRIDGES}${bridge_line}\n"
+            elif echo "$bridge_line" | grep -q "^obfs4"; then
+                OBFS4_BRIDGES="${OBFS4_BRIDGES}Bridge ${bridge_line}\n"
+            else
+                OBFS4_BRIDGES="${OBFS4_BRIDGES}Bridge obfs4 ${bridge_line}\n"
+            fi
+        done
+    fi
     
     # WebTunnel bridges
-    echo ""
-    printf "    %s%s%s Enter WebTunnel bridge lines %s(empty line to finish)%s\n" "${C_BCYAN}" "${SYM_TRIANGLE}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-    echo ""
-    
-    WEBTUNNEL_BRIDGES=""
-    while true; do
-        printf "      %swebtunnel%s%s>%s " "${C_CYAN}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-        read bridge_line
-        [ -z "$bridge_line" ] && break
+    if pkg info webtunnel-tor >/dev/null 2>&1; then
+        echo ""
+        printf "    %s%s%s Enter WebTunnel bridges %s(empty line to finish)%s\n" "${C_BCYAN}" "${SYM_TRIANGLE}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
+        echo ""
         
-        if echo "$bridge_line" | grep -q "^Bridge"; then
-            WEBTUNNEL_BRIDGES="${WEBTUNNEL_BRIDGES}${bridge_line}\n"
-        else
-            WEBTUNNEL_BRIDGES="${WEBTUNNEL_BRIDGES}Bridge webtunnel ${bridge_line}\n"
-        fi
-    done
+        WEBTUNNEL_BRIDGES=""
+        while true; do
+            printf "      %swebtunnel>%s " "${C_CYAN}" "${C_RESET}"
+            read bridge_line
+            [ -z "$bridge_line" ] && break
+            
+            if echo "$bridge_line" | grep -q "^Bridge"; then
+                WEBTUNNEL_BRIDGES="${WEBTUNNEL_BRIDGES}${bridge_line}\n"
+            elif echo "$bridge_line" | grep -q "^webtunnel"; then
+                WEBTUNNEL_BRIDGES="${WEBTUNNEL_BRIDGES}Bridge ${bridge_line}\n"
+            else
+                WEBTUNNEL_BRIDGES="${WEBTUNNEL_BRIDGES}Bridge webtunnel ${bridge_line}\n"
+            fi
+        done
+    fi
     
     echo ""
     if [ -n "$OBFS4_BRIDGES" ] || [ -n "$WEBTUNNEL_BRIDGES" ]; then
-        print_success "Bridges configured successfully"
+        print_success "Bridges configured"
     else
-        print_warning "No bridges entered - using direct connection"
+        print_warning "No bridges entered - add them later to ${TORRC_PATH}"
     fi
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# TOR CONFIGURATION
+# ════════════════════════════════════════════════════════════════════════════
+
+configure_ipv6() {
+    print_section_header "IPv6 Configuration" "${SYM_GLOBE}"
+    
+    print_info "IPv6 can improve Tor connectivity"
+    echo ""
+    
+    if prompt_yes_no "Enable IPv6 in Tor?" "Y"; then
+        USE_IPV6="yes"
+        print_success "IPv6 enabled"
+    else
+        USE_IPV6="no"
+        print_info "IPv6 disabled"
+    fi
+}
+
+setup_tor_directories() {
+    print_action "Setting up Tor directories..."
+    
+    # Create directories
+    mkdir -p "$LOG_DIR" "$PID_DIR" "$DATA_DIR"
+    
+    # Create log file
+    touch "${LOG_DIR}/notices.log"
+    
+    # Set ownership to _tor user
+    chown -R ${TOR_USER}:${TOR_GROUP} "$LOG_DIR"
+    chown -R ${TOR_USER}:${TOR_GROUP} "$PID_DIR"
+    chown -R ${TOR_USER}:${TOR_GROUP} "$DATA_DIR"
+    
+    # Set permissions
+    chmod 750 "$LOG_DIR"
+    chmod 750 "$PID_DIR"
+    chmod 700 "$DATA_DIR"
+    chmod 640 "${LOG_DIR}/notices.log"
+    
+    print_success "Directories created with correct permissions"
+    print_subaction "Log dir: ${LOG_DIR} (${TOR_USER}:${TOR_GROUP}, 750)"
+    print_subaction "Log file: ${LOG_DIR}/notices.log (${TOR_USER}:${TOR_GROUP}, 640)"
+    print_subaction "PID dir: ${PID_DIR} (${TOR_USER}:${TOR_GROUP}, 750)"
+    print_subaction "Data dir: ${DATA_DIR} (${TOR_USER}:${TOR_GROUP}, 700)"
 }
 
 generate_torrc() {
@@ -871,11 +946,8 @@ generate_torrc() {
         print_subaction "${backup}"
     fi
     
-    # Create directories
-    print_action "Creating directories..."
-    mkdir -p "$LOG_DIR" "$PID_DIR"
-    chown _tor:_tor "$LOG_DIR" "$PID_DIR"
-    print_success "Directories created"
+    # Setup directories first
+    setup_tor_directories
     
     # Generate torrc
     print_action "Writing configuration..."
@@ -892,205 +964,457 @@ generate_torrc() {
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 # ─────────────────────────────────────────────────────────────────────────────
+# USER CONFIGURATION
+# ─────────────────────────────────────────────────────────────────────────────
+# Run Tor as this user (do not run as root!)
+User ${TOR_USER}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DATA DIRECTORY
+# ─────────────────────────────────────────────────────────────────────────────
+# DataDirectory stores keys, cached directory, etc.
+# Must be owned by ${TOR_USER} with permissions 700
+DataDirectory ${DATA_DIR}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # LOGGING
 # ─────────────────────────────────────────────────────────────────────────────
+# Log levels: debug, info, notice, warn, err
+# Log notice file ${LOG_DIR}/notices.log
+# Log info file ${LOG_DIR}/info.log
+# Log debug file ${LOG_DIR}/debug.log (uncomment for debugging)
 Log notice file ${LOG_DIR}/notices.log
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PID FILE
+# ─────────────────────────────────────────────────────────────────────────────
+PidFile ${PID_DIR}/tor.pid
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DNS CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
-# Uncomment the line below if you want Tor to handle DNS on port 53
+# DNSPort - Tor will respond to DNS requests on this port
+# Configure clients to use this as their DNS server for .onion resolution
+#
+# Uncomment the line below if you want Tor to handle DNS on port 53:
 # DNSPort ${LOCAL_IP}:53
 
+# DNS proxy for Tor resolution
 DNSPort 127.0.0.1:9053
 DNSPort ${LOCAL_IP}:9053
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VIRTUAL ADDRESS MAPPING
 # ─────────────────────────────────────────────────────────────────────────────
+# When a hostname is requested that ends with .onion, Tor maps it to an
+# internal IP address. This is used for transparent proxying.
 VirtualAddrNetworkIPv4 10.192.0.0/10
 AutomapHostsOnResolve 1
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DAEMON MODE
 # ─────────────────────────────────────────────────────────────────────────────
+# Run Tor in background as a daemon
 RunAsDaemon 1
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SOCKS PROXY
 # ─────────────────────────────────────────────────────────────────────────────
+# SocksPort - SOCKS5 proxy for applications to connect through Tor
+# Applications can be configured to use localhost:9050 or LAN_IP:9050
 SocksPort 127.0.0.1:9050
 SocksPort ${LOCAL_IP}:9050
+
+# Optional: IsolateClientAddr - give each client a different circuit
+# SocksPort ${LOCAL_IP}:9050 IsolateClientAddr IsolateSOCKSAuth
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TRANSPARENT PROXY
 # ─────────────────────────────────────────────────────────────────────────────
-TransPort 9040
+# TransPort - Used for transparent proxying with firewall rules
+# Traffic redirected to this port will be sent through Tor
+TransPort 127.0.0.1:9040
+
+# Optional: Bind to specific interface
+# TransPort ${LOCAL_IP}:9040
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EXIT POLICY (Relay disabled - client only)
 # ─────────────────────────────────────────────────────────────────────────────
+# This node is a client only, not an exit relay
 ExitPolicy reject *:*
 ExitPolicy reject6 *:*
 ExitRelay 0
 
 # ─────────────────────────────────────────────────────────────────────────────
 # NODE RESTRICTIONS
-# Exclude CIS and nearby countries for privacy
 # ─────────────────────────────────────────────────────────────────────────────
-ExcludeNodes {RU}, {BY}, {KG}, {KZ}, {UZ}, {TJ}, {TM}, {TR}, {AZ}, {AM}
-ExcludeExitNodes {RU}, {BY}, {KG}, {KZ}, {UZ}, {TJ}, {TM}, {TR}, {AZ}, {AM}
+# Exclude CIS and nearby countries for privacy
+# Country codes: https://b3rn3d.herokuapp.com/blog/2014/03/05/tor-country-codes
+#
+# {RU} - Russia
+# {BY} - Belarus  
+# {KZ} - Kazakhstan
+# {KG} - Kyrgyzstan
+# {UZ} - Uzbekistan
+# {TJ} - Tajikistan
+# {TM} - Turkmenistan
+# {AZ} - Azerbaijan
+# {AM} - Armenia
+# {TR} - Turkey
+#
+ExcludeNodes {RU}, {BY}, {KZ}, {KG}, {UZ}, {TJ}, {TM}, {AZ}, {AM}, {TR}
+ExcludeExitNodes {RU}, {BY}, {KZ}, {KG}, {UZ}, {TJ}, {TM}, {AZ}, {AM}, {TR}
 
-# Prefer Polish exit nodes (can be changed)
-# ExitNodes {PL}
+# StrictNodes - If set to 1, Tor will fail to operate if it cannot find
+# a path that avoids the excluded nodes
 StrictNodes 1
 
+# Optional: Prefer specific exit countries (uncomment to use)
+# ExitNodes {PL}, {DE}, {NL}, {SE}, {CH}
+
 # ─────────────────────────────────────────────────────────────────────────────
-# MISC SETTINGS
+# PERFORMANCE & MISC SETTINGS  
 # ─────────────────────────────────────────────────────────────────────────────
+# HeartbeatPeriod - How often to log heartbeat message
 HeartbeatPeriod 1 hours
 
+# CircuitBuildTimeout - How long to wait for a circuit to be built
+# CircuitBuildTimeout 60
+
+# LearnCircuitBuildTimeout - Let Tor learn the best timeout
+# LearnCircuitBuildTimeout 1
+
+# NumEntryGuards - Number of entry guards to use
+# NumEntryGuards 3
+
+# KeepalivePeriod - Send keepalive to keep connections open
+# KeepalivePeriod 60
+
+# NewCircuitPeriod - How often to build a new circuit
+# NewCircuitPeriod 30
+
+# MaxCircuitDirtiness - How long to use a circuit before building new one
+# MaxCircuitDirtiness 600
+
+EOF
+
+    # Add transport plugins section
+    local has_obfs4=$(pkg info obfs4proxy-tor >/dev/null 2>&1 && echo "yes" || echo "no")
+    local has_webtunnel=$(pkg info webtunnel-tor >/dev/null 2>&1 && echo "yes" || echo "no")
+    
+    if [ "$has_obfs4" = "yes" ] || [ "$has_webtunnel" = "yes" ]; then
+        cat >> "$TORRC_PATH" << 'EOF'
 # ─────────────────────────────────────────────────────────────────────────────
 # TRANSPORT PLUGINS
 # ─────────────────────────────────────────────────────────────────────────────
-ClientTransportPlugin obfs4 exec /usr/local/bin/obfs4proxy managed
-ClientTransportPlugin webtunnel exec /usr/local/bin/webtunnel-tor-client
-
+# Pluggable transports allow Tor to use different protocols to avoid detection
+# 
+# obfs4 - Looks like random noise, most commonly used
+# webtunnel - Looks like regular HTTPS traffic
+#
 EOF
+        
+        if [ "$has_obfs4" = "yes" ]; then
+            echo "ClientTransportPlugin obfs4 exec /usr/local/bin/obfs4proxy managed" >> "$TORRC_PATH"
+        else
+            echo "# ClientTransportPlugin obfs4 exec /usr/local/bin/obfs4proxy managed" >> "$TORRC_PATH"
+        fi
+        
+        if [ "$has_webtunnel" = "yes" ]; then
+            echo "ClientTransportPlugin webtunnel exec /usr/local/bin/webtunnel-tor-client" >> "$TORRC_PATH"
+        else
+            echo "# ClientTransportPlugin webtunnel exec /usr/local/bin/webtunnel-tor-client" >> "$TORRC_PATH"
+        fi
+        
+        echo "" >> "$TORRC_PATH"
+    fi
 
     # Add IPv6 configuration
-    if [ "$USE_IPV6" = "yes" ]; then
-        cat >> "$TORRC_PATH" << 'EOF'
+    cat >> "$TORRC_PATH" << EOF
 # ─────────────────────────────────────────────────────────────────────────────
 # IPv6 CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
+# ClientUseIPv6 - Whether to use IPv6 for outgoing connections
+# ClientUseIPv4 - Whether to use IPv4 for outgoing connections
+# ClientPreferIPv6ORPort - Prefer IPv6 when connecting to relays
+#
+EOF
+    
+    if [ "$USE_IPV6" = "yes" ]; then
+        cat >> "$TORRC_PATH" << 'EOF'
 ClientUseIPv6 1
 ClientUseIPv4 1
 ClientPreferIPv6ORPort 1
-ClientPreferIPv6DirPort 0
-
 EOF
     else
         cat >> "$TORRC_PATH" << 'EOF'
-# ─────────────────────────────────────────────────────────────────────────────
-# IPv6 CONFIGURATION
-# ─────────────────────────────────────────────────────────────────────────────
 ClientUseIPv6 0
 ClientPreferIPv6ORPort 0
-
 EOF
     fi
+    
+    echo "" >> "$TORRC_PATH"
 
     # Add bridge configuration
-    if [ -n "$OBFS4_BRIDGES" ] || [ -n "$WEBTUNNEL_BRIDGES" ]; then
-        cat >> "$TORRC_PATH" << 'EOF'
+    cat >> "$TORRC_PATH" << 'EOF'
 # ─────────────────────────────────────────────────────────────────────────────
 # BRIDGE CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
-UseBridges 1
-
+# UseBridges - Whether to use bridge relays
+# Bridges help bypass censorship by making Tor traffic look like other traffic
+#
+# To get bridges:
+#   1. Web: https://bridges.torproject.org/
+#   2. Email: bridges@torproject.org (send empty email)
+#   3. Telegram: @GetBridgesBot
+#
+# Bridge line format:
+#   Bridge obfs4 IP:PORT FINGERPRINT cert=CERT iat-mode=0
+#   Bridge webtunnel IP:PORT FINGERPRINT url=https://... ver=0.0.3
+#
 EOF
-        [ -n "$OBFS4_BRIDGES" ] && printf "%b" "$OBFS4_BRIDGES" >> "$TORRC_PATH"
-        [ -n "$WEBTUNNEL_BRIDGES" ] && printf "%b" "$WEBTUNNEL_BRIDGES" >> "$TORRC_PATH"
+
+    if [ "$USE_BRIDGES" = "yes" ] && { [ -n "$OBFS4_BRIDGES" ] || [ -n "$WEBTUNNEL_BRIDGES" ]; }; then
+        echo "UseBridges 1" >> "$TORRC_PATH"
+        echo "" >> "$TORRC_PATH"
+        
+        if [ -n "$OBFS4_BRIDGES" ]; then
+            echo "# OBFS4 Bridges" >> "$TORRC_PATH"
+            printf "%b" "$OBFS4_BRIDGES" >> "$TORRC_PATH"
+            echo "" >> "$TORRC_PATH"
+        fi
+        
+        if [ -n "$WEBTUNNEL_BRIDGES" ]; then
+            echo "# WebTunnel Bridges" >> "$TORRC_PATH"
+            printf "%b" "$WEBTUNNEL_BRIDGES" >> "$TORRC_PATH"
+            echo "" >> "$TORRC_PATH"
+        fi
     else
         cat >> "$TORRC_PATH" << 'EOF'
-# ─────────────────────────────────────────────────────────────────────────────
-# BRIDGE CONFIGURATION
-# ─────────────────────────────────────────────────────────────────────────────
 UseBridges 0
 
-# To add bridges later:
-#   1. Get bridges from: https://bridges.torproject.org/
-#   2. Change UseBridges to 1
-#   3. Add bridge lines below:
-#
-# Bridge obfs4 <IP:PORT> <FINGERPRINT> cert=<CERT> iat-mode=0
-# Bridge webtunnel <IP:PORT> <FINGERPRINT> url=<URL>
-#
+# Example bridge lines (uncomment and modify to use):
+# Bridge obfs4 192.0.2.1:443 FINGERPRINT cert=CERTIFICATE iat-mode=0
+# Bridge webtunnel 192.0.2.2:443 FINGERPRINT url=https://example.com/path ver=0.0.3
+
 EOF
     fi
 
-    printf "    %s%s%s Configuration written to: %s%s%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_CYAN}" "${TORRC_PATH}" "${C_RESET}"
+    # Add additional commented options
+    cat >> "$TORRC_PATH" << 'EOF'
+# ─────────────────────────────────────────────────────────────────────────────
+# ADDITIONAL OPTIONS (uncomment to enable)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ControlPort - Allows external programs to control Tor
+# ControlPort 9051
+# HashedControlPassword (generate with: tor --hash-password "password")
+
+# CookieAuthentication - Alternative to password for control port
+# CookieAuthentication 1
+
+# DisableDebuggerAttachment - Prevent debugging (security)
+# DisableDebuggerAttachment 1
+
+# SafeLogging 1 - Scrub sensitive info from logs
+# SafeLogging 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# END OF CONFIGURATION
+# ─────────────────────────────────────────────────────────────────────────────
+EOF
+
+    # Set proper ownership for torrc
+    chown root:${TOR_GROUP} "$TORRC_PATH"
+    chmod 640 "$TORRC_PATH"
+
+    print_success "Configuration written to ${TORRC_PATH}"
 }
 
-setup_autostart() {
-    print_action "Setting up autostart service..."
+create_tor_rc_script() {
+    print_action "Creating Tor rc.d script..."
     
-    local rc_script="/usr/local/etc/rc.d/tor"
-    
-    cat > "$rc_script" << 'RCEOF'
+    cat > "$TOR_RC_SCRIPT" << 'RCEOF'
 #!/bin/sh
-#
+
 # PROVIDE: tor
-# REQUIRE: DAEMON
+# REQUIRE: DAEMON FILESYSTEMS NETWORKING
 # BEFORE: LOGIN
 # KEYWORD: shutdown
 #
-# AntiZapret Tor Service Script
+# Add the following line to /etc/rc.conf or /etc/rc.conf.d/tor to enable tor:
+#   tor_enable="YES"
+#
+# Configuration options:
+#   tor_conf (str):       Path to torrc file. Default: /usr/local/etc/tor/torrc
+#   tor_user (str):       Tor daemon user. Default: _tor
+#   tor_group (str):      Tor group. Default: _tor
+#   tor_pidfile (str):    Tor pid file. Default: /var/run/tor/tor.pid
+#   tor_datadir (str):    Tor data directory. Default: /var/db/tor
 #
 
 . /etc/rc.subr
 
 name="tor"
-rcvar="tor_enable"
+rcvar=tor_enable
+
+load_rc_config ${name}
+
+: ${tor_enable:="NO"}
+: ${tor_conf:="/usr/local/etc/tor/torrc"}
+: ${tor_user:="_tor"}
+: ${tor_group:="_tor"}
+: ${tor_pidfile:="/var/run/tor/tor.pid"}
+: ${tor_datadir:="/var/db/tor"}
+: ${tor_logdir:="/var/log/tor"}
+
+required_files="${tor_conf}"
+pidfile="${tor_pidfile}"
 command="/usr/local/bin/tor"
-tor_user="_tor"
-pidfile="/var/run/tor/tor.pid"
-required_files="/usr/local/etc/tor/torrc"
+command_args="-f ${tor_conf} --PidFile ${tor_pidfile} --RunAsDaemon 1"
 extra_commands="reload"
 
-load_rc_config $name
-: ${tor_enable:="YES"}
+start_precmd="${name}_prestart"
+stop_postcmd="${name}_poststop"
+
+tor_prestart()
+{
+    # Create PID directory
+    if [ ! -d "$(dirname ${tor_pidfile})" ]; then
+        mkdir -p "$(dirname ${tor_pidfile})"
+        chown ${tor_user}:${tor_group} "$(dirname ${tor_pidfile})"
+        chmod 750 "$(dirname ${tor_pidfile})"
+    fi
+    
+    # Create data directory
+    if [ ! -d "${tor_datadir}" ]; then
+        mkdir -p "${tor_datadir}"
+        chown ${tor_user}:${tor_group} "${tor_datadir}"
+        chmod 700 "${tor_datadir}"
+    fi
+    
+    # Ensure correct ownership of data directory
+    chown ${tor_user}:${tor_group} "${tor_datadir}"
+    chmod 700 "${tor_datadir}"
+    
+    # Create log directory
+    if [ ! -d "${tor_logdir}" ]; then
+        mkdir -p "${tor_logdir}"
+        chown ${tor_user}:${tor_group} "${tor_logdir}"
+        chmod 750 "${tor_logdir}"
+    fi
+    
+    # Ensure correct ownership of log directory
+    chown ${tor_user}:${tor_group} "${tor_logdir}"
+    
+    # Remove stale PID file
+    rm -f "${tor_pidfile}"
+    
+    return 0
+}
+
+tor_poststop()
+{
+    rm -f "${tor_pidfile}"
+    return 0
+}
 
 run_rc_command "$1"
 RCEOF
 
-    chmod +x "$rc_script"
+    chmod +x "$TOR_RC_SCRIPT"
+    print_success "Tor rc.d script created: ${TOR_RC_SCRIPT}"
+}
+
+create_tor_rc_conf() {
+    print_action "Creating Tor rc.conf.d configuration..."
+    
+    # Create /etc/rc.conf.d directory if it doesn't exist
+    mkdir -p /etc/rc.conf.d
+    
+    cat > "$TOR_RC_CONF" << EOF
+# Tor configuration for rc.d
+# Generated by AntiZapret Installer v${VERSION}
+
+tor_enable="YES"
+tor_conf="${TORRC_PATH}"
+tor_user="${TOR_USER}"
+tor_group="${TOR_GROUP}"
+tor_pidfile="${PID_DIR}/tor.pid"
+tor_datadir="${DATA_DIR}"
+tor_logdir="${LOG_DIR}"
+EOF
+
+    print_success "Tor rc.conf.d created: ${TOR_RC_CONF}"
+}
+
+setup_autostart() {
+    print_action "Configuring Tor autostart..."
+    
+    # Create rc.d script
+    create_tor_rc_script
+    
+    # Create rc.conf.d/tor configuration
+    create_tor_rc_conf
+    
+    # Also add to main rc.conf for compatibility
     sysrc tor_enable="YES" >/dev/null 2>&1
     
-    print_success "Autostart service configured"
+    print_success "Tor autostart configured"
 }
 
 install_antizapret() {
     print_section_header "Installing AntiZapret" "${SYM_SHIELD}"
     
-    print_action "Setting up AntiZapret IP list updater..."
-    
-    if [ ! -d "$SCRIPT_DIR" ]; then
-        print_subaction "Cloning repository..."
-        cd /root
-        git clone https://github.com/Limych/antizapret.git >/dev/null 2>&1 &
-        spinner $! "Cloning AntiZapret repository..."
-    else
-        print_subaction "Updating existing repository..."
-        cd "$SCRIPT_DIR"
-        git pull >/dev/null 2>&1 &
-        spinner $! "Updating AntiZapret repository..."
+    if ! command -v git >/dev/null 2>&1; then
+        print_warning "Git not installed, trying to install..."
+        install_opnsense_package "git" "Git"
+        
+        if ! command -v git >/dev/null 2>&1; then
+            print_error "Cannot install AntiZapret without git"
+            return 1
+        fi
     fi
     
-    chmod +x "${SCRIPT_DIR}/antizapret.pl"
+    print_action "Cloning AntiZapret repository..."
     
-    print_action "Running initial IP list update..."
-    "${SCRIPT_DIR}/antizapret.pl" > "$IP_LIST_PATH" 2>&1 &
-    spinner $! "Downloading blocked IP list..."
-    
-    if [ -f "$IP_LIST_PATH" ]; then
-        local ip_count=$(wc -l < "$IP_LIST_PATH" | tr -d ' ')
-        printf "    %s%s%s IP list updated: %s%s%s entries\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_BWHITE}" "${ip_count}" "${C_RESET}"
+    if [ ! -d "$SCRIPT_DIR" ]; then
+        cd /root
+        if git clone https://github.com/Limych/antizapret.git >/dev/null 2>&1; then
+            print_success "Repository cloned"
+        else
+            print_error "Failed to clone repository"
+            return 1
+        fi
     else
-        print_warning "Could not create IP list"
+        cd "$SCRIPT_DIR"
+        git pull >/dev/null 2>&1 || true
+        print_success "Repository updated"
+    fi
+    
+    if [ -f "${SCRIPT_DIR}/antizapret.pl" ]; then
+        chmod +x "${SCRIPT_DIR}/antizapret.pl"
+        
+        print_action "Updating IP list..."
+        
+        if "${SCRIPT_DIR}/antizapret.pl" > "$IP_LIST_PATH" 2>/dev/null; then
+            local count=$(wc -l < "$IP_LIST_PATH" | tr -d ' ')
+            print_success "IP list: ${count} entries"
+        else
+            print_warning "IP list update failed - will retry on cron"
+        fi
     fi
 }
 
 configure_opnsense() {
     if [ "$IS_OPNSENSE" != "yes" ]; then
-        print_info "Skipping OPNsense integration (not detected)"
         return
     fi
     
     print_section_header "OPNsense Integration" "${SYM_GEAR}"
     
-    print_action "Creating OPNsense action scripts..."
+    mkdir -p "$ACTIONS_DIR"
     
     # AntiZapret action
     cat > "${ACTIONS_DIR}/actions_antizapret.conf" << 'EOF'
@@ -1101,45 +1425,42 @@ type:script
 message:Renew AntiZapret IP-list
 description:Renew AntiZapret IP-list
 EOF
-    print_success "AntiZapret cron action created"
+    print_success "AntiZapret action created"
 
-    # Tor service actions
+    # Tor actions
     cat > "${ACTIONS_DIR}/actions_tor.conf" << 'EOF'
 [start]
 command:service tor start
 parameters:
 type:script
-message:Starting TOR service
-description:Start TOR anonymity service
+message:Starting TOR
+description:Start TOR service
 
 [stop]
 command:service tor stop
 parameters:
 type:script
-message:Stopping TOR service
-description:Stop TOR anonymity service
+message:Stopping TOR
+description:Stop TOR service
 
 [restart]
 command:service tor restart
 parameters:
 type:script
-message:Restarting TOR service
-description:Restart TOR anonymity service
+message:Restarting TOR
+description:Restart TOR service
 
 [status]
 command:service tor status
 parameters:
 type:script
-message:TOR service status
-description:Check TOR service status
+message:TOR status
+description:Check TOR status
 EOF
-    print_success "Tor service actions created"
+    print_success "Tor actions created"
 
-    print_action "Reloading configd..."
-    service configd restart >/dev/null 2>&1 &
-    spinner $! "Reloading OPNsense configuration daemon..."
-    
-    print_success "OPNsense integration complete"
+    service configd restart >/dev/null 2>&1 || true
+    print_success "OPNsense configured"
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1147,28 +1468,60 @@ EOF
 # ════════════════════════════════════════════════════════════════════════════
 
 start_tor_service() {
-    print_section_header "Starting Tor Service" "${SYM_ROCKET}"
+    print_section_header "Starting Tor" "${SYM_ROCKET}"
     
     # Stop if running
     if pgrep -x tor >/dev/null 2>&1; then
-        print_action "Stopping existing Tor process..."
-        service tor stop >/dev/null 2>&1 || true
+        print_action "Stopping existing Tor..."
+        service tor stop >/dev/null 2>&1 || pkill tor 2>/dev/null || true
         sleep 2
     fi
     
-    print_action "Starting Tor service..."
-    service tor start >/dev/null 2>&1
+    # Remove stale PID file
+    rm -f "${PID_DIR}/tor.pid" 2>/dev/null
     
-    # Wait and verify
-    countdown 5 "Waiting for Tor to initialize"
+    # Ensure directories exist with correct permissions
+    print_action "Setting up directories with correct permissions..."
     
-    if pgrep -x tor >/dev/null 2>&1; then
-        print_success "Tor service started successfully!"
+    mkdir -p "$LOG_DIR" "$PID_DIR" "$DATA_DIR"
+    touch "${LOG_DIR}/notices.log"
+    
+    chown -R ${TOR_USER}:${TOR_GROUP} "$LOG_DIR"
+    chown -R ${TOR_USER}:${TOR_GROUP} "$PID_DIR"
+    chown -R ${TOR_USER}:${TOR_GROUP} "$DATA_DIR"
+    
+    chmod 750 "$LOG_DIR"
+    chmod 750 "$PID_DIR"
+    chmod 700 "$DATA_DIR"
+    chmod 640 "${LOG_DIR}/notices.log"
+    
+    print_success "Directory permissions set"
+    
+    # Verify configuration
+    print_action "Verifying Tor configuration..."
+    if tor --verify-config -f "$TORRC_PATH" >/dev/null 2>&1; then
+        print_success "Configuration is valid"
     else
-        print_error "Failed to start Tor service"
-        printf "    %s%s%s Check logs: %stail -f %s/notices.log%s\n" "${C_BCYAN}" "${SYM_INFO}" "${C_RESET}" "${C_CYAN}" "${LOG_DIR}" "${C_RESET}"
+        print_error "Configuration validation failed!"
+        print_info "Run: tor --verify-config -f ${TORRC_PATH}"
         return 1
     fi
+    
+    print_action "Starting Tor service..."
+    
+    if service tor start 2>&1; then
+        countdown 5 "Initializing"
+        
+        if pgrep -x tor >/dev/null 2>&1; then
+            local tor_pid=$(pgrep -x tor)
+            print_success "Tor is running! (PID: ${tor_pid})"
+            return 0
+        fi
+    fi
+    
+    print_error "Failed to start Tor via service"
+    print_info "Check logs: tail -f ${LOG_DIR}/notices.log"
+    return 1
 }
 
 verify_installation() {
@@ -1177,38 +1530,36 @@ verify_installation() {
     local errors=0
     local warnings=0
     
-    echo ""
-    print_subsection "Service Status"
+    print_subsection "Services"
     echo ""
     
-    # Check Tor process
     if pgrep -x tor >/dev/null 2>&1; then
         local tor_pid=$(pgrep -x tor)
-        print_key_value_status "Tor Process" "Running (PID: ${tor_pid})" "ok"
+        local tor_user_running=$(ps -o user= -p $tor_pid 2>/dev/null | tr -d ' ')
+        print_key_value_status "Tor Process" "Running as ${tor_user_running} (PID: ${tor_pid})" "ok"
     else
         print_key_value_status "Tor Process" "Not running" "error"
         errors=$((errors + 1))
     fi
     
-    # Check ports
     if sockstat -4l 2>/dev/null | grep -q ":9050"; then
-        print_key_value_status "SOCKS Proxy" "Listening on port 9050" "ok"
+        print_key_value_status "SOCKS (9050)" "OK" "ok"
     else
-        print_key_value_status "SOCKS Proxy" "Not detected" "warn"
+        print_key_value_status "SOCKS (9050)" "Not listening" "warn"
         warnings=$((warnings + 1))
     fi
     
     if sockstat -4l 2>/dev/null | grep -q ":9053"; then
-        print_key_value_status "DNS Proxy" "Listening on port 9053" "ok"
+        print_key_value_status "DNS (9053)" "OK" "ok"
     else
-        print_key_value_status "DNS Proxy" "Not detected" "warn"
+        print_key_value_status "DNS (9053)" "Not listening" "warn"
         warnings=$((warnings + 1))
     fi
     
     if sockstat -4l 2>/dev/null | grep -q ":9040"; then
-        print_key_value_status "Transparent Proxy" "Listening on port 9040" "ok"
+        print_key_value_status "TransPort (9040)" "OK" "ok"
     else
-        print_key_value_status "Transparent Proxy" "Not detected" "warn"
+        print_key_value_status "TransPort (9040)" "Not listening" "warn"
         warnings=$((warnings + 1))
     fi
     
@@ -1216,28 +1567,48 @@ verify_installation() {
     print_subsection_end
     echo ""
     
-    print_subsection "Files & Configuration"
+    print_subsection "Files & Permissions"
     echo ""
     
-    # Check config file
     if [ -f "$TORRC_PATH" ]; then
-        print_key_value_status "Tor Config" "Present" "ok"
+        print_key_value_status "Tor Config" "OK" "ok"
     else
         print_key_value_status "Tor Config" "Missing" "error"
         errors=$((errors + 1))
     fi
     
-    # Check IP list
+    if [ -f "$TOR_RC_SCRIPT" ] && [ -x "$TOR_RC_SCRIPT" ]; then
+        print_key_value_status "RC Script" "OK" "ok"
+    else
+        print_key_value_status "RC Script" "Missing or not executable" "warn"
+        warnings=$((warnings + 1))
+    fi
+    
+    if [ -f "$TOR_RC_CONF" ]; then
+        print_key_value_status "RC Conf" "OK" "ok"
+    else
+        print_key_value_status "RC Conf" "Missing" "warn"
+        warnings=$((warnings + 1))
+    fi
+    
+    # Check directory permissions
+    local data_owner=$(stat -f '%Su:%Sg' "$DATA_DIR" 2>/dev/null)
+    if [ "$data_owner" = "${TOR_USER}:${TOR_GROUP}" ]; then
+        print_key_value_status "Data Dir" "${DATA_DIR} (${data_owner})" "ok"
+    else
+        print_key_value_status "Data Dir" "${DATA_DIR} (${data_owner}) - should be ${TOR_USER}:${TOR_GROUP}" "error"
+        errors=$((errors + 1))
+    fi
+    
     if [ -f "$IP_LIST_PATH" ]; then
         local count=$(wc -l < "$IP_LIST_PATH" | tr -d ' ')
         print_key_value_status "IP List" "${count} entries" "ok"
     else
-        print_key_value_status "IP List" "Not found" "warn"
+        print_key_value_status "IP List" "Missing" "warn"
         warnings=$((warnings + 1))
     fi
     
-    # Check autostart
-    if grep -q 'tor_enable="YES"' /etc/rc.conf 2>/dev/null; then
+    if grep -q 'tor_enable="YES"' /etc/rc.conf 2>/dev/null || [ -f "$TOR_RC_CONF" ]; then
         print_key_value_status "Autostart" "Enabled" "ok"
     else
         print_key_value_status "Autostart" "Disabled" "warn"
@@ -1246,15 +1617,39 @@ verify_installation() {
     
     echo ""
     print_subsection_end
+    
+    # Show transport plugins status if bridges are used
+    if [ "$USE_BRIDGES" = "yes" ]; then
+        echo ""
+        print_subsection "Transport Plugins"
+        echo ""
+        
+        if [ -x "/usr/local/bin/obfs4proxy" ]; then
+            print_key_value_status "OBFS4" "Available" "ok"
+        else
+            print_key_value_status "OBFS4" "Not installed" "warn"
+            warnings=$((warnings + 1))
+        fi
+        
+        if [ -x "/usr/local/bin/webtunnel-tor-client" ]; then
+            print_key_value_status "WebTunnel" "Available" "ok"
+        else
+            print_key_value_status "WebTunnel" "Not installed" "warn"
+            warnings=$((warnings + 1))
+        fi
+        
+        echo ""
+        print_subsection_end
+    fi
+    
     echo ""
     
-    # Summary
     if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
         print_success "All checks passed!"
     elif [ $errors -eq 0 ]; then
         print_warning "${warnings} warning(s) - installation mostly successful"
     else
-        print_error "${errors} error(s) found - please check logs"
+        print_error "${errors} error(s) found - please check configuration"
     fi
     
     return $errors
@@ -1266,7 +1661,6 @@ verify_installation() {
 
 print_final_summary() {
     echo ""
-    echo ""
     printf "%s" "${C_BGREEN}"
     cat << 'EOF'
     ╔═══════════════════════════════════════════════════════════════════════╗
@@ -1277,19 +1671,23 @@ print_final_summary() {
 EOF
     printf "%s" "${C_RESET}"
     
-    # Configuration Summary
     echo ""
     print_subsection "Installation Summary"
     echo ""
     
-    print_key_value "LAN IP Address" "${LOCAL_IP}" "${SYM_GLOBE}" "${C_BLUE}"
-    
-    local ipv6_status
-    [ "$USE_IPV6" = "yes" ] && ipv6_status="Enabled" || ipv6_status="Disabled"
-    print_key_value "IPv6 Support" "${ipv6_status}" "${SYM_GEAR}" "${C_MAGENTA}"
+    print_key_value "LAN IP" "${LOCAL_IP}" "${SYM_GLOBE}" "${C_BLUE}"
+    print_key_value "IPv6" "$([ "$USE_IPV6" = "yes" ] && echo "Enabled" || echo "Disabled")" "${SYM_GEAR}" "${C_MAGENTA}"
     
     local bridge_status
-    [ -n "$OBFS4_BRIDGES" ] || [ -n "$WEBTUNNEL_BRIDGES" ] && bridge_status="Configured" || bridge_status="Direct connection"
+    if [ "$USE_BRIDGES" = "yes" ]; then
+        if [ -n "$OBFS4_BRIDGES" ] || [ -n "$WEBTUNNEL_BRIDGES" ]; then
+            bridge_status="Configured"
+        else
+            bridge_status="Plugins installed"
+        fi
+    else
+        bridge_status="Direct connection"
+    fi
     print_key_value "Bridges" "${bridge_status}" "${SYM_LOCK}" "${C_PURPLE}"
     
     local opnsense_status
@@ -1299,19 +1697,19 @@ EOF
     echo ""
     print_subsection_end
     
-    # Next Steps
-    print_section_header "Next Steps - OPNsense Configuration" "${SYM_INFO}"
+    # OPNsense configuration steps
+    print_section_header "OPNsense Configuration Steps" "${SYM_INFO}"
     
     echo ""
-    printf "    %s%s STEP 1 %s %sCreate Firewall Alias%s\n" "${C_BG_BLUE}" "${C_BWHITE}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
+    printf "    %s STEP 1 %s %sCreate Firewall Alias%s\n" "${C_BG_BLUE}${C_BWHITE}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
     echo ""
     printf "      %s%s%s Navigate to: %sFirewall → Aliases → Add%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_CYAN}" "${C_RESET}"
     printf "      %s%s%s Name: %sAntiZapret_IPs%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
     printf "      %s%s%s Type: %sExternal (advanced)%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
-    printf "      %s%s%s Content URL: %s%shttps://%s/ipfw_antizapret.dat%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_UNDERLINE}" "${C_BBLUE}" "${LOCAL_IP}" "${C_RESET}"
+    printf "      %s%s%s Content URL: %shttp://%s/ipfw_antizapret.dat%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_BBLUE}" "${LOCAL_IP}" "${C_RESET}"
     
     echo ""
-    printf "    %s%s STEP 2 %s %sSetup NAT Port Forward%s\n" "${C_BG_GREEN}" "${C_BWHITE}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
+    printf "    %s STEP 2 %s %sSetup NAT Port Forward%s\n" "${C_BG_GREEN}${C_BWHITE}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
     echo ""
     printf "      %s%s%s Navigate to: %sFirewall → NAT → Port Forward → Add%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_CYAN}" "${C_RESET}"
     printf "      %s%s%s Interface: %sLAN%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
@@ -1321,7 +1719,7 @@ EOF
     printf "      %s%s%s Redirect target port: %s9040%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
     
     echo ""
-    printf "    %s%s STEP 3 %s %sSchedule Daily Updates%s\n" "${C_BG_YELLOW}" "${C_BLACK}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
+    printf "    %s STEP 3 %s %sSchedule Daily Updates%s\n" "${C_BG_YELLOW}${C_BLACK}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
     echo ""
     printf "      %s%s%s Navigate to: %sSystem → Settings → Cron → Add%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_CYAN}" "${C_RESET}"
     printf "      %s%s%s Command: %sRenew AntiZapret IP-list%s\n" "${C_MAGENTA}" "${SYM_BULLET}" "${C_RESET}" "${C_BWHITE}" "${C_RESET}"
@@ -1334,10 +1732,11 @@ EOF
     print_subsection "Tor Service Management"
     echo ""
     
-    printf "      %s%-35s%s %s%s%s\n" "${C_CYAN}" "service tor status" "${C_RESET}" "${C_DIM}" "Check service status" "${C_RESET}"
-    printf "      %s%-35s%s %s%s%s\n" "${C_CYAN}" "service tor start" "${C_RESET}" "${C_DIM}" "Start Tor" "${C_RESET}"
-    printf "      %s%-35s%s %s%s%s\n" "${C_CYAN}" "service tor stop" "${C_RESET}" "${C_DIM}" "Stop Tor" "${C_RESET}"
-    printf "      %s%-35s%s %s%s%s\n" "${C_CYAN}" "service tor restart" "${C_RESET}" "${C_DIM}" "Restart Tor" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_CYAN}" "service tor status" "${C_RESET}" "${C_DIM}" "Check service status" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_CYAN}" "service tor start" "${C_RESET}" "${C_DIM}" "Start Tor" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_CYAN}" "service tor stop" "${C_RESET}" "${C_DIM}" "Stop Tor" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_CYAN}" "service tor restart" "${C_RESET}" "${C_DIM}" "Restart Tor" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_CYAN}" "service tor reload" "${C_RESET}" "${C_DIM}" "Reload configuration" "${C_RESET}"
     
     echo ""
     print_subsection_end
@@ -1346,17 +1745,22 @@ EOF
     print_subsection "Logs & Monitoring"
     echo ""
     
-    printf "      %s%-35s%s %s%s%s\n" "${C_GREEN}" "tail -f ${LOG_DIR}/notices.log" "${C_RESET}" "${C_DIM}" "View live Tor logs" "${C_RESET}"
-    printf "      %s%-35s%s %s%s%s\n" "${C_GREEN}" "cat ${IP_LIST_PATH} | wc -l" "${C_RESET}" "${C_DIM}" "Count blocked IPs" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_GREEN}" "tail -f ${LOG_DIR}/notices.log" "${C_RESET}" "${C_DIM}" "View live Tor logs" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_GREEN}" "cat ${IP_LIST_PATH} | wc -l" "${C_RESET}" "${C_DIM}" "Count blocked IPs" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_GREEN}" "sockstat -4l | grep tor" "${C_RESET}" "${C_DIM}" "Check Tor ports" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_GREEN}" "ps aux | grep tor" "${C_RESET}" "${C_DIM}" "Check Tor process" "${C_RESET}"
     
     echo ""
     print_subsection_end
     echo ""
     
-    print_subsection "AntiZapret Updates"
+    print_subsection "Configuration & Troubleshooting"
     echo ""
     
-    printf "      %s%-35s%s %s%s%s\n" "${C_MAGENTA}" "${SCRIPT_DIR}/antizapret.pl" "${C_RESET}" "${C_DIM}" "Update IP list manually" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_YELLOW}" "tor --verify-config -f ${TORRC_PATH}" "${C_RESET}" "${C_DIM}" "Verify configuration" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_YELLOW}" "cat ${TORRC_PATH}" "${C_RESET}" "${C_DIM}" "View configuration" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_YELLOW}" "${SCRIPT_DIR}/antizapret.pl" "${C_RESET}" "${C_DIM}" "Update IP list manually" "${C_RESET}"
+    printf "      %s%-40s%s %s%s%s\n" "${C_YELLOW}" "cat ${TOR_RC_CONF}" "${C_RESET}" "${C_DIM}" "View rc.conf.d settings" "${C_RESET}"
     
     echo ""
     print_subsection_end
@@ -1366,12 +1770,37 @@ EOF
     
     echo ""
     print_key_value "Tor Configuration" "${TORRC_PATH}" "${SYM_FILE}" "${C_CYAN}"
+    print_key_value "Tor RC Script" "${TOR_RC_SCRIPT}" "${SYM_FILE}" "${C_CYAN}"
+    print_key_value "Tor RC Config" "${TOR_RC_CONF}" "${SYM_FILE}" "${C_CYAN}"
     print_key_value "IP Blocklist" "${IP_LIST_PATH}" "${SYM_FILE}" "${C_GREEN}"
-    print_key_value "Autostart Script" "/usr/local/etc/rc.d/tor" "${SYM_FILE}" "${C_MAGENTA}"
     print_key_value "Tor Logs" "${LOG_DIR}/notices.log" "${SYM_FILE}" "${C_YELLOW}"
+    print_key_value "Tor Data" "${DATA_DIR}" "${SYM_FILE}" "${C_MAGENTA}"
     print_key_value "AntiZapret Script" "${SCRIPT_DIR}/antizapret.pl" "${SYM_FILE}" "${C_BLUE}"
     
     echo ""
+    
+    # Bridge hint if not using bridges
+    if [ "$USE_BRIDGES" != "yes" ]; then
+        echo ""
+        print_subsection "Adding Bridges Later"
+        echo ""
+        printf "      %sIf you need to add bridges in the future:%s\n" "${C_DIM}" "${C_RESET}"
+        echo ""
+        printf "      %s1.%s Install transport plugins:\n" "${C_BWHITE}" "${C_RESET}"
+        printf "         %s# Enable FreeBSD repo temporarily and install%s\n" "${C_DIM}" "${C_RESET}"
+        printf "         %spkg add %s/obfs4proxy-tor-VERSION.pkg%s\n" "${C_CYAN}" "${PKG_FREEBSD_URL}" "${C_RESET}"
+        printf "         %spkg add %s/webtunnel-tor-VERSION.pkg%s\n" "${C_CYAN}" "${PKG_FREEBSD_URL}" "${C_RESET}"
+        echo ""
+        printf "      %s2.%s Edit configuration:\n" "${C_BWHITE}" "${C_RESET}"
+        printf "         %snano %s%s\n" "${C_CYAN}" "${TORRC_PATH}" "${C_RESET}"
+        echo ""
+        printf "      %s3.%s Set UseBridges 1 and add bridge lines\n" "${C_BWHITE}" "${C_RESET}"
+        echo ""
+        printf "      %s4.%s Restart Tor:\n" "${C_BWHITE}" "${C_RESET}"
+        printf "         %sservice tor restart%s\n" "${C_CYAN}" "${C_RESET}"
+        echo ""
+        print_subsection_end
+    fi
     
     # Final warning
     echo ""
@@ -1391,12 +1820,31 @@ EOF
 }
 
 # ════════════════════════════════════════════════════════════════════════════
+# CLEANUP
+# ════════════════════════════════════════════════════════════════════════════
+
+cleanup() {
+    # Ensure FreeBSD repo is disabled on exit
+    if [ "$FREEBSD_REPO_ENABLED" = "yes" ]; then
+        disable_freebsd_repo
+    fi
+}
+
+# Set trap for cleanup
+trap cleanup EXIT INT TERM
+
+# ════════════════════════════════════════════════════════════════════════════
 # MAIN EXECUTION
 # ════════════════════════════════════════════════════════════════════════════
 
 main() {
-    # Initialize
+    # Initialize variables
+    FREEBSD_REPO_ENABLED="no"
+    
+    # Setup colors
     setup_colors
+    
+    # Print banner
     print_banner
     
     # Pre-flight checks
@@ -1410,22 +1858,18 @@ main() {
     print_gradient_line 70
     echo ""
     
-    if ! prompt_yes_no "Ready to install AntiZapret with Tor. Continue?" "Y"; then
+    if ! prompt_yes_no "Install AntiZapret with Tor?" "Y"; then
         echo ""
         print_info "Installation cancelled by user"
         echo ""
         exit 0
     fi
     
-    # Package selection
-    show_package_menu
-    
-    # Installation
-    install_packages
-    
-    # Configuration
+    # Installation steps
+    install_optional_packages
+    install_tor_packages
+    ask_about_bridges
     configure_ipv6
-    configure_bridges
     generate_torrc
     setup_autostart
     install_antizapret
@@ -1439,5 +1883,5 @@ main() {
     print_final_summary
 }
 
-# Run main function with all arguments
+# Run main function
 main "$@"
