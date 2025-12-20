@@ -533,28 +533,132 @@ search_freebsd_package() {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
-# PACKAGE MANAGEMENT
+# PACKAGE MANAGEMENT - УЛУЧШЕННАЯ ВЕРСИЯ
 # ════════════════════════════════════════════════════════════════════════════
+
+check_pkg_integrity() {
+    print_subaction "Checking pkg integrity..."
+    
+    # Проверяем, установлен ли pkg
+    if ! pkg -N >/dev/null 2>&1; then
+        print_warning "pkg not fully initialized, bootstrapping..."
+        pkg bootstrap -y >/dev/null 2>&1 || {
+            print_warning "Standard bootstrap failed, trying pkg-static..."
+            pkg-static unlock pkg 2>/dev/null
+            pkg-static install -f pkg 2>/dev/null || true
+        }
+    fi
+    
+    # Проверяем, не заблокирован ли pkg
+    if [ -f /var/run/pkg.lock ]; then
+        print_subaction "pkg is locked, trying to unlock..."
+        pkg unlock -a 2>/dev/null || true
+    fi
+    
+    # Обновляем индекс pkg
+    print_subaction "Updating pkg repository..."
+    pkg update -f >/dev/null 2>&1 || print_warning "Failed to update pkg repository, continuing anyway"
+    
+    print_success "pkg integrity check completed"
+}
 
 install_opnsense_package() {
     local pkg_name="$1"
     local pkg_desc="${2:-$pkg_name}"
     
-    if pkg info "$pkg_name" >/dev/null 2>&1; then
+    # Сначала проверяем целостность pkg
+    check_pkg_integrity
+    
+    # Проверяем, установлен ли пакет
+    if pkg info -q "$pkg_name" 2>/dev/null; then
         printf "    %s%s%s %s%s %s(already installed)%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_DIM}" "${C_RESET}"
+        # Проверяем версию для информации
+        local pkg_version=$(pkg info "$pkg_name" 2>/dev/null | grep Version | head -1)
+        if [ -n "$pkg_version" ]; then
+            print_subaction "Installed: $pkg_version"
+        fi
         return 0
     fi
     
     print_subaction "Installing ${pkg_name}..."
     
-    if pkg install -y "$pkg_name" >/dev/null 2>&1; then
-        if pkg info "$pkg_name" >/dev/null 2>&1; then
+    # Создаем временный файл для логов
+    local temp_log=$(mktemp /tmp/pkg_install.XXXXXX)
+    
+    # Пробуем установить через pkg
+    if pkg install -y "$pkg_name" > "$temp_log" 2>&1; then
+        # Проверяем, установился ли пакет
+        if pkg info -q "$pkg_name" 2>/dev/null; then
             printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+            # Показываем информацию о пакете
+            local pkg_info=$(pkg info "$pkg_name" 2>/dev/null | grep -E "Version|Size|License" | head -3)
+            if [ -n "$pkg_info" ]; then
+                echo "$pkg_info" | while read line; do
+                    print_subaction "  $line"
+                done
+            fi
+            rm -f "$temp_log"
+            return 0
+        else
+            printf "    %s%s%s %sPackage installation reported success but not found in system%s\n" "${C_BYELLOW}" "${SYM_WARN}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}"
+            # Показываем последние строки лога для диагностики
+            if [ -f "$temp_log" ]; then
+                print_subaction "Last 5 lines of pkg output:"
+                tail -5 "$temp_log" | sed 's/^/      /'
+            fi
+        fi
+    else
+        printf "    %s%s%s %sFailed to install %s (pkg install command failed)%s\n" "${C_BRED}" "${SYM_CROSS}" "${C_RESET}" "${C_RED}" "$pkg_desc" "${C_RESET}"
+        # Показываем ошибку
+        if [ -f "$temp_log" ]; then
+            print_subaction "Error output:"
+            grep -i error "$temp_log" | head -5 | sed 's/^/      /'
+        fi
+    fi
+    
+    # Если pkg install не сработал, пробуем pkg-static
+    echo ""
+    print_warning "Trying alternative installation method with pkg-static..."
+    
+    # Разблокируем и переустанавливаем pkg если нужно
+    pkg-static unlock pkg 2>/dev/null || true
+    pkg-static install -f pkg 2>/dev/null || true
+    
+    # Пробуем снова с pkg-static
+    if pkg install -y "$pkg_name" > "$temp_log" 2>&1; then
+        if pkg info -q "$pkg_name" 2>/dev/null; then
+            printf "    %s%s%s %s%s installed successfully (second attempt)%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+            rm -f "$temp_log"
             return 0
         fi
     fi
     
-    print_warning "Failed to install ${pkg_desc}"
+    # Пробуем найти пакет в других репозиториях
+    echo ""
+    print_warning "Searching for package in available repositories..."
+    local pkg_search_result=$(pkg search -Q name "^${pkg_name}$" 2>/dev/null | head -1)
+    
+    if [ -n "$pkg_search_result" ]; then
+        print_info "Found: $pkg_search_result"
+        if prompt_yes_no "Try to install from found repository?" "Y"; then
+            if pkg install -y "$pkg_name" > "$temp_log" 2>&1; then
+                if pkg info -q "$pkg_name" 2>/dev/null; then
+                    printf "    %s%s%s %s%s installed successfully (from found repository)%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+                    rm -f "$temp_log"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+    
+    # Финальная проверка - может пакет уже установлен под другим именем?
+    local pkg_installed=$(pkg info | grep -i "$pkg_name" | head -1)
+    if [ -n "$pkg_installed" ]; then
+        printf "    %s%s%s %sSimilar package found: %s%s\n" "${C_BYELLOW}" "${SYM_WARN}" "${C_RESET}" "${C_YELLOW}" "$pkg_installed" "${C_RESET}"
+        print_info "Maybe the package is already installed with different name"
+    fi
+    
+    rm -f "$temp_log"
     return 1
 }
 
@@ -569,7 +673,7 @@ install_transport_plugin() {
     
     print_subaction "Searching for ${pkg_name} in FreeBSD repository..."
     
-    # Method 1: Direct pkg install
+    # Method 1: Direct pkg install from FreeBSD repo
     print_subaction "Trying pkg install from FreeBSD repo..."
     if pkg install -r FreeBSD -y "$pkg_name" >/dev/null 2>&1; then
         if pkg info "$pkg_name" >/dev/null 2>&1; then
@@ -588,11 +692,15 @@ install_transport_plugin() {
         print_subaction "Found: ${pkg_fullname}"
         print_subaction "Downloading from: ${pkg_url}"
         
-        if pkg add "$pkg_url" 2>/dev/null; then
-            if pkg info "$pkg_name" >/dev/null 2>&1; then
-                printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
-                return 0
+        if fetch -q -o "/tmp/${pkg_fullname}.pkg" "$pkg_url" 2>/dev/null; then
+            if pkg add "/tmp/${pkg_fullname}.pkg" 2>/dev/null; then
+                if pkg info "$pkg_name" >/dev/null 2>&1; then
+                    printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+                    rm -f "/tmp/${pkg_fullname}.pkg"
+                    return 0
+                fi
             fi
+            rm -f "/tmp/${pkg_fullname}.pkg"
         fi
     fi
     
@@ -614,11 +722,15 @@ install_transport_plugin() {
             local pkg_url="${PKG_FREEBSD_URL}/${pkg_file}"
             print_subaction "Found: ${pkg_file}"
             
-            if pkg add "$pkg_url" 2>/dev/null; then
-                if pkg info "$pkg_name" >/dev/null 2>&1; then
-                    printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
-                    return 0
+            if fetch -q -o "/tmp/${pkg_file}" "$pkg_url" 2>/dev/null; then
+                if pkg add "/tmp/${pkg_file}" 2>/dev/null; then
+                    if pkg info "$pkg_name" >/dev/null 2>&1; then
+                        printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+                        rm -f "/tmp/${pkg_file}"
+                        return 0
+                    fi
                 fi
+                rm -f "/tmp/${pkg_file}"
             fi
         fi
     fi
@@ -641,11 +753,15 @@ install_transport_plugin() {
         
         print_subaction "Trying ${pkg_file}..."
         
-        if pkg add "$pkg_url" 2>/dev/null; then
-            if pkg info "$pkg_name" >/dev/null 2>&1; then
-                printf "    %s%s%s %s%s (v%s) installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "$ver" "${C_RESET}"
-                return 0
+        if fetch -q -o "/tmp/${pkg_file}" "$pkg_url" 2>/dev/null; then
+            if pkg add "/tmp/${pkg_file}" 2>/dev/null; then
+                if pkg info "$pkg_name" >/dev/null 2>&1; then
+                    printf "    %s%s%s %s%s (v%s) installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "$ver" "${C_RESET}"
+                    rm -f "/tmp/${pkg_file}"
+                    return 0
+                fi
             fi
+            rm -f "/tmp/${pkg_file}"
         fi
     done
     
@@ -667,11 +783,15 @@ install_transport_plugin() {
             
             print_subaction "Installing ${pkg_url}..."
             
-            if pkg add "$pkg_url" 2>/dev/null; then
-                if pkg info "$pkg_name" >/dev/null 2>&1; then
-                    printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
-                    return 0
+            if fetch -q -o "/tmp/${pkg_file}" "$pkg_url" 2>/dev/null; then
+                if pkg add "/tmp/${pkg_file}" 2>/dev/null; then
+                    if pkg info "$pkg_name" >/dev/null 2>&1; then
+                        printf "    %s%s%s %s%s installed successfully%s\n" "${C_BGREEN}" "${SYM_CHECK}" "${C_RESET}" "${C_GREEN}" "$pkg_desc" "${C_RESET}"
+                        rm -f "/tmp/${pkg_file}"
+                        return 0
+                    fi
                 fi
+                rm -f "/tmp/${pkg_file}"
             fi
         fi
     fi
@@ -734,7 +854,7 @@ install_tor_packages() {
     print_action "Installing Tor from OPNsense repository..."
     install_opnsense_package "tor" "Tor"
     
-    if ! pkg info tor >/dev/null 2>&1; then
+    if ! pkg info -q tor >/dev/null 2>&1; then
         print_error "Failed to install Tor - cannot continue"
         exit 1
     fi
@@ -1301,12 +1421,12 @@ tor_prestart()
     # Create log directory
     if [ ! -d "${tor_logdir}" ]; then
         mkdir -p "${tor_logdir}"
-        chown ${tor_user}:${tor_group} "${tor_logdir}"
+        chown ${tor_user}:${TOR_GROUP} "${tor_logdir}"
         chmod 750 "${tor_logdir}"
     fi
     
     # Ensure correct ownership of log directory
-    chown ${tor_user}:${tor_group} "${tor_logdir}"
+    chown ${tor_user}:${TOR_GROUP} "${tor_logdir}"
     
     # Remove stale PID file
     rm -f "${tor_pidfile}"
