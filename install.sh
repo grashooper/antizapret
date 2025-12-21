@@ -1381,7 +1381,7 @@ rcvar=tor_enable
 
 load_rc_config ${name}
 
-: ${tor_enable:="NO"}
+: ${tor_enable:="YES"}
 : ${tor_conf:="/usr/local/etc/tor/torrc"}
 : ${tor_user:="_tor"}
 : ${tor_group:="_tor"}
