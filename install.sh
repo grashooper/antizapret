@@ -28,6 +28,7 @@ DATA_DIR="/var/db/tor"
 IP_LIST_PATH="/usr/local/www/ipfw_antizapret.dat"
 ACTIONS_DIR="/usr/local/opnsense/service/conf/actions.d"
 FREEBSD_REPO_CONF="/usr/local/etc/pkg/repos/FreeBSD.conf"
+OPNSENSE_REPO_CONF="/usr/local/etc/pkg/repos/OPNsense.conf"
 
 # Tor user/group
 TOR_USER="_tor"
@@ -43,6 +44,10 @@ FREEBSD_REPO_ENABLED="no"
 
 # FreeBSD package repository
 PKG_FREEBSD_BASE="https://pkg.freebsd.org/FreeBSD"
+
+# Repository backups
+FREEBSD_REPO_BACKUP=""
+OPNSENSE_REPO_BACKUP=""
 
 # ════════════════════════════════════════════════════════════════════════════
 # COLOR DEFINITIONS
@@ -465,16 +470,66 @@ detect_network() {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
-# FreeBSD REPOSITORY MANAGEMENT
+# REPOSITORY MANAGEMENT - ИСПРАВЛЕННАЯ ВЕРСИЯ
 # ════════════════════════════════════════════════════════════════════════════
+
+backup_repo_configs() {
+    print_subaction "Backing up repository configurations..."
+    
+    # Backup FreeBSD repo config
+    if [ -f "$FREEBSD_REPO_CONF" ]; then
+        FREEBSD_REPO_BACKUP=$(mktemp /tmp/freebsd_repo_backup.XXXXXX)
+        cp "$FREEBSD_REPO_CONF" "$FREEBSD_REPO_BACKUP"
+        print_subaction "Backed up FreeBSD repo config"
+    fi
+    
+    # Backup OPNsense repo config
+    if [ -f "$OPNSENSE_REPO_CONF" ]; then
+        OPNSENSE_REPO_BACKUP=$(mktemp /tmp/opnsense_repo_backup.XXXXXX)
+        cp "$OPNSENSE_REPO_CONF" "$OPNSENSE_REPO_BACKUP"
+        print_subaction "Backed up OPNsense repo config"
+    fi
+    
+    print_success "Repository configurations backed up"
+}
+
+restore_repo_configs() {
+    print_subaction "Restoring repository configurations..."
+    
+    # Restore FreeBSD repo config
+    if [ -n "$FREEBSD_REPO_BACKUP" ] && [ -f "$FREEBSD_REPO_BACKUP" ]; then
+        cp "$FREEBSD_REPO_BACKUP" "$FREEBSD_REPO_CONF"
+        rm -f "$FREEBSD_REPO_BACKUP"
+        print_subaction "Restored FreeBSD repo config"
+    else
+        # If no backup, ensure FreeBSD repo is disabled
+        cat > "$FREEBSD_REPO_CONF" << 'REPOEOF'
+FreeBSD: { enabled: no }
+FreeBSD-kmods: { enabled: no }
+REPOEOF
+        print_subaction "Set FreeBSD repo to disabled (no backup found)"
+    fi
+    
+    # Restore OPNsense repo config
+    if [ -n "$OPNSENSE_REPO_BACKUP" ] && [ -f "$OPNSENSE_REPO_BACKUP" ]; then
+        cp "$OPNSENSE_REPO_BACKUP" "$OPNSENSE_REPO_CONF"
+        rm -f "$OPNSENSE_REPO_BACKUP"
+        print_subaction "Restored OPNsense repo config"
+    fi
+    
+    # Force pkg update to refresh configurations
+    pkg update -f >/dev/null 2>&1 || true
+    
+    print_success "Repository configurations restored"
+}
 
 enable_freebsd_repo() {
     print_subaction "Enabling FreeBSD repository temporarily..."
     
-    if [ -f "$FREEBSD_REPO_CONF" ]; then
-        cp "$FREEBSD_REPO_CONF" "${FREEBSD_REPO_CONF}.bak" 2>/dev/null
-    fi
+    # Backup current configs first
+    backup_repo_configs
     
+    # Enable FreeBSD repository
     cat > "$FREEBSD_REPO_CONF" << 'REPOEOF'
 FreeBSD: {
   url: "pkg+https://pkg.freebsd.org/${ABI}/latest",
@@ -483,31 +538,26 @@ FreeBSD: {
   fingerprints: "/usr/share/keys/pkg",
   enabled: yes
 }
+FreeBSD-kmods: { enabled: no }
 REPOEOF
     
-    print_subaction "Updating package catalog..."
-    pkg update -f >/dev/null 2>&1 || true
+    # Ensure OPNsense repo remains enabled if it exists
+    if [ -f "$OPNSENSE_REPO_CONF" ]; then
+        if ! grep -q "enabled: yes" "$OPNSENSE_REPO_CONF"; then
+            sed -i '' 's/enabled:.*no/enabled: yes/' "$OPNSENSE_REPO_CONF" 2>/dev/null || true
+        fi
+    fi
     
     FREEBSD_REPO_ENABLED="yes"
-    print_success "FreeBSD repository enabled"
+    print_success "FreeBSD repository enabled (temporarily)"
 }
 
 disable_freebsd_repo() {
     if [ "$FREEBSD_REPO_ENABLED" = "yes" ]; then
         print_subaction "Disabling FreeBSD repository..."
-        
-        if [ -f "${FREEBSD_REPO_CONF}.bak" ]; then
-            mv "${FREEBSD_REPO_CONF}.bak" "$FREEBSD_REPO_CONF" 2>/dev/null
-        else
-            cat > "$FREEBSD_REPO_CONF" << 'REPOEOF'
-FreeBSD: { enabled: no }
-FreeBSD-kmods: { enabled: no }
-REPOEOF
-        fi
-        
-        pkg update -f >/dev/null 2>&1 || true
+        restore_repo_configs
         FREEBSD_REPO_ENABLED="no"
-        print_success "FreeBSD repository disabled"
+        print_success "FreeBSD repository disabled and configurations restored"
     fi
 }
 
@@ -533,7 +583,7 @@ search_freebsd_package() {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
-# PACKAGE MANAGEMENT - УЛУЧШЕННАЯ ВЕРСИЯ
+# PACKAGE MANAGEMENT
 # ════════════════════════════════════════════════════════════════════════════
 
 check_pkg_integrity() {
@@ -555,9 +605,9 @@ check_pkg_integrity() {
         pkg unlock -a 2>/dev/null || true
     fi
     
-    # Обновляем индекс pkg
-    print_subaction "Updating pkg repository..."
-    pkg update -f >/dev/null 2>&1 || print_warning "Failed to update pkg repository, continuing anyway"
+    # Обновляем индекс pkg только из OPNsense репозитория
+    print_subaction "Updating pkg repository (OPNsense only)..."
+    pkg update -r OPNsense -f >/dev/null 2>&1 || print_warning "Failed to update pkg repository, continuing anyway"
     
     print_success "pkg integrity check completed"
 }
@@ -2019,14 +2069,23 @@ EOF
 # ════════════════════════════════════════════════════════════════════════════
 
 cleanup() {
-    # Ensure FreeBSD repo is disabled on exit
+    print_action "Performing cleanup..."
+    
+    # Always restore repository configurations
+    if [ -n "$FREEBSD_REPO_BACKUP" ] || [ -n "$OPNSENSE_REPO_BACKUP" ]; then
+        restore_repo_configs
+    fi
+    
+    # Ensure FreeBSD repo is disabled
     if [ "$FREEBSD_REPO_ENABLED" = "yes" ]; then
         disable_freebsd_repo
     fi
+    
+    print_success "Cleanup completed"
 }
 
 # Set trap for cleanup
-trap cleanup EXIT INT TERM
+trap cleanup EXIT INT TERM HUP
 
 # ════════════════════════════════════════════════════════════════════════════
 # MAIN EXECUTION
@@ -2035,6 +2094,8 @@ trap cleanup EXIT INT TERM
 main() {
     # Initialize variables
     FREEBSD_REPO_ENABLED="no"
+    FREEBSD_REPO_BACKUP=""
+    OPNSENSE_REPO_BACKUP=""
     
     # Setup colors
     setup_colors
