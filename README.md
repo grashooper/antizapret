@@ -69,6 +69,7 @@
 ```bash
 # Подключитесь к роутеру по SSH и выполните:
 cd /root
+pkg install git
 git clone https://github.com/grashooper/antizapret.git
 cd antizapret
 chmod +x install.sh
