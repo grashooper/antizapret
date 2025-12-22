@@ -1406,91 +1406,140 @@ create_tor_rc_script() {
     print_action "Creating Tor rc.d script..."
     
     cat > "$TOR_RC_SCRIPT" << 'RCEOF'
+	
 #!/bin/sh
 
 # PROVIDE: tor
-# REQUIRE: DAEMON FILESYSTEMS NETWORKING
+# REQUIRE: DAEMON FILESYSTEMS
 # BEFORE: LOGIN
-# KEYWORD: shutdown
 #
-# Add the following line to /etc/rc.conf or /etc/rc.conf.d/tor to enable tor:
-#   tor_enable="YES"
+# Add the following lines to /etc/rc.conf to enable tor.
+# All these options will overide any settings in your local torrc as
+# they are command line options.
 #
-# Configuration options:
-#   tor_conf (str):       Path to torrc file. Default: /usr/local/etc/tor/torrc
-#   tor_user (str):       Tor daemon user. Default: _tor
-#   tor_group (str):      Tor group. Default: _tor
-#   tor_pidfile (str):    Tor pid file. Default: /var/run/tor/tor.pid
-#   tor_datadir (str):    Tor data directory. Default: /var/db/tor
+# tor_enable (bool):	Set it to "YES" to enable tor. Default: YES
+# tor_instances (str):	List of instances. Default: ""
+# tor_conf (str):	Points to your torrc file.
+#			Default: /usr/local/etc/tor/torrc
+# tor_flags (str):	Additional flags.  Common to all instances.
+# tor_user (str):	Tor daemon user. Default: _tor
+# tor_group (str):	Tor group. Default: _tor
+# tor_pidfile (str):	Tor pid file.  Default: /var/run/tor/tor.pid
+# tor_datadir (str):	Tor datadir.  Default: /var/db/tor
+# tor_disable_default_instance (str):	Doesn't run the default instance.
+#			Only valid when tor_instances is used.
+#			Default: YES
+# tor_setuid (str):	Runtime setuid.  Default: YES
+#
+# The instance definition that tor_instances expects:
+# inst_name{:inst_conf:inst_user:inst_group:inst_pidfile:inst_data_dir}
 #
 
 . /etc/rc.subr
 
 name="tor"
 rcvar=tor_enable
+exit_code=0
 
 load_rc_config ${name}
 
-: ${tor_enable:="YES"}
-: ${tor_conf:="/usr/local/etc/tor/torrc"}
-: ${tor_user:="_tor"}
-: ${tor_group:="_tor"}
-: ${tor_pidfile:="/var/run/tor/tor.pid"}
-: ${tor_datadir:="/var/db/tor"}
-: ${tor_logdir:="/var/log/tor"}
+: ${tor_enable="YES"}
+: ${tor_instances=""}
+: ${tor_conf="/usr/local/etc/tor/torrc"}
+: ${tor_flags=""}
+: ${tor_user="_tor"}
+: ${tor_group="_tor"}
+: ${tor_pidfile="/var/run/tor/tor.pid"}
+: ${tor_datadir="/var/db/tor"}
+: ${tor_disable_default_instance="YES"}
+: ${tor_setuid="YES"}
 
-required_files="${tor_conf}"
-pidfile="${tor_pidfile}"
-command="/usr/local/bin/tor"
-command_args="-f ${tor_conf} --PidFile ${tor_pidfile} --RunAsDaemon 1"
+instance=${slave_instance}
+if [ -n "${instance}" ]; then
+  inst_def=${instance}
+  inst_name=${inst_def%%:*}
+  [ "${inst_name}" != "main" ] || err 1 "${name} instance can't be named 'main'"
+  inst_def=${inst_def#$inst_name}
+  if [ -n "$inst_def" ]; then
+    # extended instance: parameters are set explicitly
+    inst_def=${inst_def#:}
+    tor_conf=${inst_def%%:*}
+    inst_def=${inst_def#$tor_conf:}
+    tor_user=${inst_def%%:*}
+    inst_def=${inst_def#$tor_user:}
+    tor_group=${inst_def%%:*}
+    inst_def=${inst_def#$tor_group:}
+    tor_pidfile=${inst_def%%:*}
+    tor_datadir=${inst_def#$tor_pidfile:}
+    if [ -z "${tor_conf}" -o -z "${tor_user}" -o -z "${tor_group}" -o -z "${tor_pidfile}" -o -z "${tor_datadir}" ]; then
+      warn "invalid tor instance ${inst_name} settings: ${instance}"
+      exit 1
+    fi
+  else
+    # regular instance: default parameters are used
+    tor_conf=${tor_conf}@${inst_name}
+    tor_pidfile=${tor_pidfile}@${inst_name}
+    tor_datadir=${tor_datadir}/instance@${inst_name}
+  fi
+  if ! [ -r ${tor_conf} ]; then
+    warn "tor instance ${inst_name} config file ${tor_conf} doesn't exist or isn't readable"
+    warn "you can copy the sample config /usr/local/etc/tor/torrc.sample and modify it"
+    exit 1
+  fi
+  if ! [ -d ${tor_datadir} ]; then
+    mkdir -p ${tor_datadir} &&
+    chown ${tor_user}:${tor_group} ${tor_datadir} &&
+    chmod 0700 ${tor_datadir} &&
+    echo "${name}: created the instance data directory ${tor_datadir}"
+  fi
+fi
+
+if [ -z "${instance}" -a -n "${tor_instances}" ]; then
+  inst_only="$2"
+  inst_done=0
+  for i in ${tor_instances}; do
+    inst_name=${i%%:*}
+    if [ -z "${inst_only}" -o "${inst_name}" = "${inst_only}" ]; then
+      echo -n "${name} instance ${inst_name}: "
+      if ! slave_instance=${i} /usr/local/etc/rc.d/tor "$1"; then
+        exit_code=1
+      fi
+      inst_done=$((inst_done+1))
+    fi
+  done
+  if [ -z "${inst_only}" -o "${inst_only}" = "main" ]; then
+    checkyesYES tor_disable_default_instance && return $exit_code
+    echo -n "${name} main instance: "
+  elif [ -n "${inst_only}" ]; then
+    [ $inst_done -gt 0 ] || err 1 "${name} instance '$inst_only' isn't defined"
+    return  $exit_code
+  fi
+fi
+
+required_files=${tor_conf}
+required_dirs=${tor_datadir}
+pidfile=${tor_pidfile}
+command="/usr/local/bin/${name}"
+command_args="-f ${tor_conf} --PidFile ${tor_pidfile} --RunAsDaemon 1 --DataDirectory ${tor_datadir} ${tor_flags}"
 extra_commands="reload"
 
-start_precmd="${name}_prestart"
-stop_postcmd="${name}_poststop"
+# clear user setting in conf file: it should be done through the command line
+if grep -q "^User ${tor_user}$" ${tor_conf}; then
+  sed -i '' -e "s/^User ${tor_user}$//" ${tor_conf}
+fi
 
-tor_prestart()
-{
-    # Create PID directory
-    if [ ! -d "$(dirname ${tor_pidfile})" ]; then
-        mkdir -p "$(dirname ${tor_pidfile})"
-        chown ${tor_user}:${tor_group} "$(dirname ${tor_pidfile})"
-        chmod 750 "$(dirname ${tor_pidfile})"
-    fi
-    
-    # Create data directory
-    if [ ! -d "${tor_datadir}" ]; then
-        mkdir -p "${tor_datadir}"
-        chown ${tor_user}:${tor_group} "${tor_datadir}"
-        chmod 700 "${tor_datadir}"
-    fi
-    
-    # Ensure correct ownership of data directory
-    chown ${tor_user}:${tor_group} "${tor_datadir}"
-    chmod 700 "${tor_datadir}"
-    
-    # Create log directory
-    if [ ! -d "${tor_logdir}" ]; then
-        mkdir -p "${tor_logdir}"
-        chown ${tor_user}:${TOR_GROUP} "${tor_logdir}"
-        chmod 750 "${tor_logdir}"
-    fi
-    
-    # Ensure correct ownership of log directory
-    chown ${tor_user}:${TOR_GROUP} "${tor_logdir}"
-    
-    # Remove stale PID file
-    rm -f "${tor_pidfile}"
-    
-    return 0
-}
+if [ $tor_setuid = "YES" ]; then
+  command_args="${command_args} --User ${tor_user}"
+  tor_user="root"
+  tor_group="wheel"
+fi
 
-tor_poststop()
-{
-    rm -f "${tor_pidfile}"
-    return 0
-}
+if ! run_rc_command "$1"; then
+  exit_code=1
+fi
 
-run_rc_command "$1"
+return $exit_code
+
 RCEOF
 
     chmod +x "$TOR_RC_SCRIPT"
@@ -1508,12 +1557,12 @@ create_tor_rc_conf() {
 # Generated by AntiZapret Installer v${VERSION}
 
 tor_enable="YES"
-tor_conf="${TORRC_PATH}"
-tor_user="${TOR_USER}"
-tor_group="${TOR_GROUP}"
-tor_pidfile="${PID_DIR}/tor.pid"
-tor_datadir="${DATA_DIR}"
-tor_logdir="${LOG_DIR}"
+# tor_conf="${TORRC_PATH}"
+# tor_user="${TOR_USER}"
+# tor_group="${TOR_GROUP}"
+# tor_pidfile="${PID_DIR}/tor.pid"
+# tor_datadir="${DATA_DIR}"
+# tor_logdir="${LOG_DIR}"
 EOF
 
     print_success "Tor rc.conf.d created: ${TOR_RC_CONF}"
