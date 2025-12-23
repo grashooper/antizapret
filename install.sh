@@ -419,16 +419,21 @@ detect_network() {
     print_action "Detecting network configuration..."
     
     DEFAULT_IFACE=$(route -n get default 2>/dev/null | grep interface | awk '{print $2}')
-    ALL_INTERFACES=$(ifconfig | grep -E "^[a-z]" | cut -d: -f1)
     
     echo ""
     print_subsection "Network Interfaces"
     echo ""
     
     local found_lan=0
+    local found_interface=""
     
+    # Get list of interfaces
+    ALL_INTERFACES=$(ifconfig -l | tr ' ' '\n')
+    
+    # First pass: display all interfaces
     for iface in $ALL_INTERFACES; do
         local ip=$(ifconfig "$iface" 2>/dev/null | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}' | head -1)
+        local description=$(ifconfig "$iface" 2>/dev/null | grep "description" | cut -d: -f2- | xargs)
         
         if [ -n "$ip" ]; then
             local marker=""
@@ -438,24 +443,71 @@ detect_network() {
             if [ "$iface" = "$DEFAULT_IFACE" ]; then
                 marker=" (WAN)"
                 status_color="${C_YELLOW}"
-                status_icon="${SYM_CIRCLE}"
+                status_icon="${SYM_GLOBE}"
             fi
             
-            if echo "$ip" | grep -qE "^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)"; then
+            # Check if description contains "LAN" (case insensitive)
+            if [ -n "$description" ] && echo "$description" | grep -qi "LAN"; then
+                # This is likely a LAN interface
+                if [ $found_lan -eq 0 ]; then
+                    found_interface="$iface"
+                    LOCAL_IP="$ip"
+                    found_lan=1
+                    status_color="${C_BGREEN}"
+                    status_icon="${SYM_SHIELD}"
+                    marker=" (LAN)"
+                fi
+            fi
+            
+            if [ -n "$description" ]; then
                 print_key_value "$iface" "${ip}${marker}" "${status_icon}" "${status_color}"
-                [ $found_lan -eq 0 ] && LOCAL_IP="$ip" && found_lan=1
+                print_subaction "Description: $description"
             else
-                print_key_value "$iface" "${ip}${marker}" "${SYM_CIRCLE}" "${C_YELLOW}"
+                print_key_value "$iface" "${ip}${marker}" "${status_icon}" "${status_color}"
             fi
         fi
     done
+    
+    # If no LAN interface found by description, try to find by private IP range
+    if [ $found_lan -eq 0 ]; then
+        for iface in $ALL_INTERFACES; do
+            local ip=$(ifconfig "$iface" 2>/dev/null | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}' | head -1)
+            
+            if [ -n "$ip" ]; then
+                # Check if IP is in private range
+                if echo "$ip" | grep -qE "^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)"; then
+                    # This is likely a LAN IP
+                    if [ $found_lan -eq 0 ]; then
+                        found_interface="$iface"
+                        LOCAL_IP="$ip"
+                        found_lan=1
+                        break
+                    fi
+                fi
+            fi
+        done
+    fi
+    
+    # If still no LAN IP found, use the first non-loopback IP
+    if [ $found_lan -eq 0 ]; then
+        for iface in $ALL_INTERFACES; do
+            local ip=$(ifconfig "$iface" 2>/dev/null | grep "inet " | grep -v "127.0.0.1" | awk '{print $2}' | head -1)
+            
+            if [ -n "$ip" ]; then
+                found_interface="$iface"
+                LOCAL_IP="$ip"
+                found_lan=1
+                break
+            fi
+        done
+    fi
     
     echo ""
     print_subsection_end
     
     if [ -n "$LOCAL_IP" ]; then
         echo ""
-        printf "    %s%s%s Detected LAN IP: %s%s%s\n" "${C_BCYAN}" "${SYM_INFO}" "${C_RESET}" "${C_BWHITE}" "${LOCAL_IP}" "${C_RESET}"
+        printf "    %s%s%s Detected interface: %s%s%s (%s%s%s)\n" "${C_BCYAN}" "${SYM_INFO}" "${C_RESET}" "${C_BWHITE}" "${found_interface}" "${C_RESET}" "${C_CYAN}" "${LOCAL_IP}" "${C_RESET}"
         
         if ! prompt_yes_no "Use this IP address?" "Y"; then
             prompt_input "Enter LAN IP address" LOCAL_IP "$LOCAL_IP"
@@ -1078,33 +1130,6 @@ configure_ipv6() {
     fi
 }
 
-setup_tor_directories() {
-    print_action "Setting up Tor directories..."
-    
-    # Create directories
-    mkdir -p "$LOG_DIR" "$PID_DIR" "$DATA_DIR"
-    
-    # Create log file
-    touch "${LOG_DIR}/notices.log"
-    
-    # Set ownership to _tor user
-    chown -R ${TOR_USER}:${TOR_GROUP} "$LOG_DIR"
-    chown -R ${TOR_USER}:${TOR_GROUP} "$PID_DIR"
-    chown -R ${TOR_USER}:${TOR_GROUP} "$DATA_DIR"
-    
-    # Set permissions
-    chmod 750 "$LOG_DIR"
-    chmod 750 "$PID_DIR"
-    chmod 700 "$DATA_DIR"
-    chmod 640 "${LOG_DIR}/notices.log"
-    
-    print_success "Directories created with correct permissions"
-    print_subaction "Log dir: ${LOG_DIR} (${TOR_USER}:${TOR_GROUP}, 750)"
-    print_subaction "Log file: ${LOG_DIR}/notices.log (${TOR_USER}:${TOR_GROUP}, 640)"
-    print_subaction "PID dir: ${PID_DIR} (${TOR_USER}:${TOR_GROUP}, 750)"
-    print_subaction "Data dir: ${DATA_DIR} (${TOR_USER}:${TOR_GROUP}, 700)"
-}
-
 generate_torrc() {
     print_section_header "Generating Tor Configuration" "${SYM_FILE}"
     
@@ -1115,9 +1140,6 @@ generate_torrc() {
         print_info "Backed up existing config to:"
         print_subaction "${backup}"
     fi
-    
-    # Setup directories first
-    setup_tor_directories
     
     # Generate torrc
     print_action "Writing configuration..."
@@ -1137,14 +1159,14 @@ generate_torrc() {
 # USER CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 # Run Tor as this user (do not run as root!)
-User ${TOR_USER}
+# User ${TOR_USER}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA DIRECTORY
 # ─────────────────────────────────────────────────────────────────────────────
 # DataDirectory stores keys, cached directory, etc.
 # Must be owned by ${TOR_USER} with permissions 700
-DataDirectory ${DATA_DIR}
+# DataDirectory ${DATA_DIR}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGGING
@@ -1153,12 +1175,12 @@ DataDirectory ${DATA_DIR}
 # Log notice file ${LOG_DIR}/notices.log
 # Log info file ${LOG_DIR}/info.log
 # Log debug file ${LOG_DIR}/debug.log (uncomment for debugging)
-Log notice file ${LOG_DIR}/notices.log
+# Log notice file ${LOG_DIR}/notices.log
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PID FILE
 # ─────────────────────────────────────────────────────────────────────────────
-PidFile ${PID_DIR}/tor.pid
+# PidFile ${PID_DIR}/tor.pid
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DNS CONFIGURATION
@@ -1705,23 +1727,6 @@ start_tor_service() {
         print_success "User ${TOR_USER} exists"
     fi
     
-    # Ensure directories exist with correct permissions
-    print_action "Setting up directories with correct permissions..."
-    
-    mkdir -p "$LOG_DIR" "$PID_DIR" "$DATA_DIR"
-    touch "${LOG_DIR}/notices.log"
-    
-    chown -R ${TOR_USER}:${TOR_GROUP} "$LOG_DIR"
-    chown -R ${TOR_USER}:${TOR_GROUP} "$PID_DIR"
-    chown -R ${TOR_USER}:${TOR_GROUP} "$DATA_DIR"
-    
-    chmod 750 "$LOG_DIR"
-    chmod 750 "$PID_DIR"
-    chmod 700 "$DATA_DIR"
-    chmod 640 "${LOG_DIR}/notices.log"
-    
-    print_success "Directory permissions set"
-    
     # Verify configuration
     print_action "Verifying Tor configuration..."
     if tor --verify-config -f "$TORRC_PATH" >/dev/null 2>&1; then
@@ -1886,12 +1891,17 @@ verify_installation() {
     fi
     
     # Check directory permissions
-    local data_owner=$(stat -f '%Su:%Sg' "$DATA_DIR" 2>/dev/null)
-    if [ "$data_owner" = "${TOR_USER}:${TOR_GROUP}" ]; then
-        print_key_value_status "Data Dir" "${DATA_DIR} (${data_owner})" "ok"
+    if [ -d "$DATA_DIR" ]; then
+        local data_owner=$(stat -f '%Su:%Sg' "$DATA_DIR" 2>/dev/null)
+        if [ "$data_owner" = "${TOR_USER}:${TOR_GROUP}" ]; then
+            print_key_value_status "Data Dir" "${DATA_DIR} (${data_owner})" "ok"
+        else
+            print_key_value_status "Data Dir" "${DATA_DIR} (${data_owner}) - should be ${TOR_USER}:${TOR_GROUP}" "warn"
+            warnings=$((warnings + 1))
+        fi
     else
-        print_key_value_status "Data Dir" "${DATA_DIR} (${data_owner}) - should be ${TOR_USER}:${TOR_GROUP}" "error"
-        errors=$((errors + 1))
+        print_key_value_status "Data Dir" "Missing - will be created by OPNsense" "warn"
+        warnings=$((warnings + 1))
     fi
     
     if [ -f "$IP_LIST_PATH" ]; then
