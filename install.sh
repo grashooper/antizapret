@@ -5,7 +5,7 @@
 # ║                    AntiZapret Installation Script                         ║
 # ║                      for OPNsense / FreeBSD                               ║
 # ║                                                                           ║
-# ║                           Version 3.5                                     ║
+# ║                           Version 3.6                                     ║
 # ║                                                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
@@ -14,7 +14,7 @@
 # CONFIGURATION & CONSTANTS
 # ════════════════════════════════════════════════════════════════════════════
 
-VERSION="3.5"
+VERSION="3.6"
 SCRIPT_NAME="AntiZapret Installer"
 
 # Paths
@@ -41,6 +41,7 @@ OBFS4_BRIDGES=""
 WEBTUNNEL_BRIDGES=""
 LOCAL_IP=""
 FREEBSD_REPO_ENABLED="no"
+PKG_REINSTALL_NEEDED="no"
 
 # FreeBSD package repository
 PKG_FREEBSD_BASE="https://pkg.freebsd.org/FreeBSD"
@@ -522,7 +523,7 @@ detect_network() {
 }
 
 # ════════════════════════════════════════════════════════════════════════════
-# REPOSITORY MANAGEMENT - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# REPOSITORY MANAGEMENT
 # ════════════════════════════════════════════════════════════════════════════
 
 backup_repo_configs() {
@@ -611,6 +612,113 @@ disable_freebsd_repo() {
         FREEBSD_REPO_ENABLED="no"
         print_success "FreeBSD repository disabled and configurations restored"
     fi
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# PKG RESTORATION FOR OPNSENSE
+# ════════════════════════════════════════════════════════════════════════════
+
+restore_opnsense_pkg() {
+    # Only run on OPNsense systems
+    if [ "$IS_OPNSENSE" != "yes" ]; then
+        return 0
+    fi
+    
+    # Only run if we installed packages from FreeBSD repo
+    if [ "$PKG_REINSTALL_NEEDED" != "yes" ]; then
+        return 0
+    fi
+    
+    print_section_header "Restoring OPNsense Package Manager" "${SYM_PACKAGE}"
+    
+    print_action "This step ensures pkg compatibility with OPNsense..."
+    echo ""
+    
+    # First, ensure repository configs are correct
+    print_subaction "Verifying repository configuration..."
+    
+    # Make sure FreeBSD repo is disabled
+    cat > "$FREEBSD_REPO_CONF" << 'REPOEOF'
+FreeBSD: { enabled: no }
+FreeBSD-kmods: { enabled: no }
+REPOEOF
+    
+    # Restore OPNsense repo if we have a backup
+    if [ -n "$OPNSENSE_REPO_BACKUP" ] && [ -f "$OPNSENSE_REPO_BACKUP" ]; then
+        cp "$OPNSENSE_REPO_BACKUP" "$OPNSENSE_REPO_CONF"
+        rm -f "$OPNSENSE_REPO_BACKUP"
+        OPNSENSE_REPO_BACKUP=""
+    fi
+    
+    print_success "Repository configuration verified"
+    
+    # Now reinstall pkg from OPNsense repository
+    print_subaction "Reinstalling pkg from OPNsense repository..."
+    
+    # Use pkg-static to avoid issues with the current pkg binary
+    if pkg-static update -f >/dev/null 2>&1; then
+        print_subaction "Package database updated"
+    else
+        print_warning "Failed to update package database, continuing..."
+    fi
+    
+    # Unlock pkg if locked
+    pkg-static unlock -a >/dev/null 2>&1 || true
+    pkg-static unlock pkg >/dev/null 2>&1 || true
+    
+    # Force reinstall pkg from OPNsense repository
+    print_subaction "Force reinstalling pkg from OPNsense..."
+    
+    if pkg-static install -r OPNsense -fy pkg >/dev/null 2>&1; then
+        print_success "pkg reinstalled from OPNsense repository"
+    else
+        print_warning "pkg-static install failed, trying alternative method..."
+        
+        # Alternative: try to fetch and install manually
+        if pkg-static install -fy pkg >/dev/null 2>&1; then
+            print_success "pkg reinstalled (alternative method)"
+        else
+            print_warning "Could not reinstall pkg, but this may not be critical"
+        fi
+    fi
+    
+    # Force update pkg database again with the new pkg
+    print_subaction "Refreshing package database..."
+    if pkg update -f >/dev/null 2>&1; then
+        print_success "Package database refreshed"
+    else
+        print_warning "Failed to refresh package database"
+    fi
+    
+    # Verify pkg version
+    local pkg_version=$(pkg -v 2>/dev/null || echo "unknown")
+    local pkg_origin=$(pkg query %o pkg 2>/dev/null || echo "unknown")
+    
+    echo ""
+    print_subsection "Package Manager Status"
+    echo ""
+    print_key_value "pkg version" "${pkg_version}" "${SYM_PACKAGE}" "${C_CYAN}"
+    print_key_value "pkg origin" "${pkg_origin}" "${SYM_INFO}" "${C_BLUE}"
+    echo ""
+    print_subsection_end
+    
+    # Run integrity check
+    print_subaction "Running package integrity check..."
+    local integrity_issues=$(pkg check -d 2>&1 | grep -c "missing" || echo "0")
+    
+    if [ "$integrity_issues" = "0" ]; then
+        print_success "Package integrity check passed"
+    else
+        print_warning "Found ${integrity_issues} missing dependencies"
+        print_subaction "Attempting to fix..."
+        pkg install -fy >/dev/null 2>&1 || true
+    fi
+    
+    echo ""
+    print_success "OPNsense package manager restoration complete"
+    
+    # Mark as done so we don't run again
+    PKG_REINSTALL_NEEDED="no"
 }
 
 search_freebsd_package() {
@@ -774,6 +882,9 @@ install_transport_plugin() {
     fi
     
     print_subaction "Searching for ${pkg_name} in FreeBSD repository..."
+    
+    # Mark that we need to reinstall pkg from OPNsense after this
+    PKG_REINSTALL_NEEDED="yes"
     
     # Method 1: Direct pkg install from FreeBSD repo
     print_subaction "Trying pkg install from FreeBSD repo..."
@@ -1453,9 +1564,6 @@ create_tor_rc_script() {
 #			Default: YES
 # tor_setuid (str):	Runtime setuid.  Default: YES
 #
-# The instance definition that tor_instances expects:
-# inst_name{:inst_conf:inst_user:inst_group:inst_pidfile:inst_data_dir}
-#
 
 . /etc/rc.subr
 
@@ -1946,6 +2054,30 @@ verify_installation() {
         print_subsection_end
     fi
     
+    # Check pkg status on OPNsense
+    if [ "$IS_OPNSENSE" = "yes" ]; then
+        echo ""
+        print_subsection "Package Manager Status"
+        echo ""
+        
+        local pkg_version=$(pkg -v 2>/dev/null || echo "unknown")
+        local pkg_origin=$(pkg query %o pkg 2>/dev/null || echo "unknown")
+        
+        print_key_value_status "pkg version" "${pkg_version}" "ok"
+        
+        if echo "$pkg_origin" | grep -qi "opnsense"; then
+            print_key_value_status "pkg source" "OPNsense repository" "ok"
+        elif [ "$pkg_origin" = "ports-mgmt/pkg" ]; then
+            print_key_value_status "pkg source" "FreeBSD ports (normal)" "ok"
+        else
+            print_key_value_status "pkg source" "${pkg_origin}" "warn"
+            warnings=$((warnings + 1))
+        fi
+        
+        echo ""
+        print_subsection_end
+    fi
+    
     echo ""
     
     if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
@@ -2103,6 +2235,10 @@ EOF
         printf "      %s4.%s Restart Tor:\n" "${C_BWHITE}" "${C_RESET}"
         printf "         %sservice tor restart%s\n" "${C_CYAN}" "${C_RESET}"
         echo ""
+        printf "      %s5.%s Restore OPNsense pkg (IMPORTANT!):\n" "${C_BWHITE}" "${C_RESET}"
+        printf "         %spkg-static install -r OPNsense -fy pkg%s\n" "${C_CYAN}" "${C_RESET}"
+        printf "         %spkg update -f%s\n" "${C_CYAN}" "${C_RESET}"
+        echo ""
         print_subsection_end
     fi
     
@@ -2140,6 +2276,11 @@ cleanup() {
         disable_freebsd_repo
     fi
     
+    # Restore OPNsense pkg if needed
+    if [ "$PKG_REINSTALL_NEEDED" = "yes" ] && [ "$IS_OPNSENSE" = "yes" ]; then
+        restore_opnsense_pkg
+    fi
+    
     print_success "Cleanup completed"
 }
 
@@ -2155,6 +2296,7 @@ main() {
     FREEBSD_REPO_ENABLED="no"
     FREEBSD_REPO_BACKUP=""
     OPNSENSE_REPO_BACKUP=""
+    PKG_REINSTALL_NEEDED="no"
     
     # Setup colors
     setup_colors
@@ -2189,6 +2331,12 @@ main() {
     setup_autostart
     install_antizapret
     configure_opnsense
+    
+    # Restore OPNsense pkg if we installed from FreeBSD repo
+    # This is critical step to fix pkg compatibility
+    if [ "$PKG_REINSTALL_NEEDED" = "yes" ] && [ "$IS_OPNSENSE" = "yes" ]; then
+        restore_opnsense_pkg
+    fi
     
     # Start and verify
     start_tor_service
