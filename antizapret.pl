@@ -22,34 +22,96 @@ my $temp_gz = '/tmp/dump.csv.gz';
 my $temp_csv = '/tmp/dump.csv';
 
 # URL для загрузки gzipped CSV файла
-my $url = 'https://raw.githubusercontent.com/zapret-info/z-i/refs/heads/master/dump.csv.gz';
+my $url = 'https://raw.githubusercontent.com/zapret-info/z-i/master/dump.csv.gz';
+my $host = 'raw.githubusercontent.com';
+
+# GitHub IP адреса для обхода DNS
+my @github_ips = (
+    '185.199.108.133',
+    '185.199.109.133',
+    '185.199.110.133',
+    '185.199.111.133',
+);
+
+# Таймауты
+my $connect_timeout = 15;
+my $max_timeout = 120;
+
+# Функция для загрузки файла
+sub download_file {
+    my ($url, $output, $use_ip, $ip) = @_;
+    
+    # Поиск доступной утилиты для загрузки
+    my $which_output = `which curl fetch wget 2>/dev/null`;
+    my $downloader = '';
+    
+    if ($which_output =~ /(\/\S*curl)/) {
+        $downloader = 'curl';
+    } elsif ($which_output =~ /(\/\S*fetch)/) {
+        $downloader = 'fetch';
+    } elsif ($which_output =~ /(\/\S*wget)/) {
+        $downloader = 'wget';
+    } else {
+        die "ERROR: Не удается найти программу для загрузки данных (curl/fetch/wget).";
+    }
+    
+    my $cmd;
+    
+    if ($use_ip && $ip && $downloader eq 'curl') {
+        # Загрузка через IP (обход DNS)
+        $cmd = "curl -s --connect-timeout $connect_timeout --max-time $max_timeout " .
+               "--resolve '${host}:443:${ip}' -o '$output' '$url' 2>/dev/null";
+    } else {
+        # Обычная загрузка
+        if ($downloader eq 'curl') {
+            $cmd = "curl -s --connect-timeout $connect_timeout --max-time $max_timeout -o '$output' '$url' 2>/dev/null";
+        } elsif ($downloader eq 'fetch') {
+            $cmd = "fetch -T $connect_timeout -q -o '$output' '$url' 2>/dev/null";
+        } elsif ($downloader eq 'wget') {
+            $cmd = "wget --timeout=$connect_timeout -q -O '$output' '$url' 2>/dev/null";
+        }
+    }
+    
+    print "Выполнение: $cmd\n" if $debug;
+    my $result = system($cmd);
+    
+    return ($result == 0 && -s $output);
+}
 
 # Определение способа получения данных
-my $fetcher;
 if (@ARGV) {
     # Если файл передан как аргумент, использовать его напрямую
     $temp_csv = $ARGV[0];
     print "Используется указанный файл: $temp_csv\n" if $debug;
 }
 else {
-    # Поиск доступной утилиты для загрузки
-    my $downloader = `which fetch curl wget`;
-    $downloader =~ s/^(\S+)\s.*$/$1/s;
-    if ($downloader =~ /fetch/) {
-        $fetcher = "$downloader -o $temp_gz $url";
+    my $download_success = 0;
+    
+    # Попытка 1: Прямая загрузка
+    print "Попытка прямой загрузки с $url\n" if $debug;
+    if (download_file($url, $temp_gz, 0, undef)) {
+        print "Файл успешно загружен напрямую\n" if $debug;
+        $download_success = 1;
     }
-    elsif ($downloader =~ /curl/) {
-        $fetcher = "$downloader -o $temp_gz $url";
+    
+    # Попытка 2: Загрузка через IP (если прямая не удалась)
+    if (!$download_success) {
+        print "Прямая загрузка не удалась, пробуем через IP...\n" if $debug;
+        
+        foreach my $ip (@github_ips) {
+            print "Попытка загрузки через IP: $ip\n" if $debug;
+            if (download_file($url, $temp_gz, 1, $ip)) {
+                print "Файл успешно загружен через IP $ip\n" if $debug;
+                $download_success = 1;
+                last;
+            }
+        }
     }
-    elsif ($downloader =~ /wget/) {
-        $fetcher = "$downloader -O $temp_gz $url";
+    
+    # Проверка успешности загрузки
+    if (!$download_success) {
+        die "ERROR: Не удалось загрузить файл ни напрямую, ни через IP.";
     }
-    else {
-        die "ERROR: Не удается найти программу для загрузки данных.";
-    }
-    print "Загрузка файла с $url\n" if $debug;
-    system($fetcher) == 0 or die "ERROR: Не удалось загрузить файл.";
-    print "Файл успешно загружен в $temp_gz\n" if $debug;
     
     # Автоматическая распаковка gzipped файла
     print "Распаковка файла $temp_gz в $temp_csv\n" if $debug;
